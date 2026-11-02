@@ -1,0 +1,144 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * JobSync design tokens.
+ * shadcn/ui token names, tuned for a navy operations-console look:
+ * neutral content surfaces, a deep navy sidebar and a navy primary.
+ * Chart colours follow a validated categorical/status palette (see
+ * src/lib/charts/palette.ts) and are exposed here so CSS and SVG share them.
+ */
+:root {
+  --radius: 0.625rem;
+
+  --background: #f5f6f8;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #1e3a8a;
+  --primary-foreground: #f8fafc;
+  --secondary: #eef1f6;
+  --secondary-foreground: #1e293b;
+  --muted: #eef1f6;
+  --muted-foreground: #5b6478;
+  --accent: #e8edf7;
+  --accent-foreground: #1e293b;
+  --destructive: #c2302f;
+  --border: #e2e6ee;
+  --input: #d9dee8;
+  --ring: #3b5bdb;
+
+  /* Sidebar: deep navy */
+  --sidebar: #0b1730;
+  --sidebar-foreground: #c9d3e6;
+  --sidebar-muted: #7f8db0;
+  --sidebar-primary: #ffffff;
+  --sidebar-accent: #16264a;
+  --sidebar-border: #1b2a4d;
+  --sidebar-ring: #4c6ef5;
+
+  /* Charts — categorical slots (fixed order) */
+  --chart-surface: #ffffff;
+  --chart-grid: #e8ebf1;
+  --chart-axis: #6b7385;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+
+  /* Status palette — reserved for state, always paired with icon + label */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+  --status-neutral: #8a93a6;
+  --status-info: #2a78d6;
+}
+
+.dark {
+  --background: #0a1020;
+  --foreground: #e6eaf2;
+  --card: #111a2e;
+  --card-foreground: #e6eaf2;
+  --popover: #111a2e;
+  --popover-foreground: #e6eaf2;
+  --primary: #7c9cff;
+  --primary-foreground: #0a1020;
+  --secondary: #1a2540;
+  --secondary-foreground: #e6eaf2;
+  --muted: #1a2540;
+  --muted-foreground: #98a3bb;
+  --accent: #1d2a48;
+  --accent-foreground: #e6eaf2;
+  --destructive: #e66767;
+  --border: #22304f;
+  --input: #2a3a5e;
+  --ring: #7c9cff;
+
+  --sidebar: #070e1f;
+  --sidebar-border: #15213d;
+
+  --chart-surface: #111a2e;
+  --chart-grid: #1f2b47;
+  --chart-axis: #98a3bb;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+}
+
+@theme inline {
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-status-good: var(--status-good);
+  --color-status-warning: var(--status-warning);
+  --color-status-serious: var(--status-serious);
+  --color-status-critical: var(--status-critical);
+  --color-status-neutral: var(--status-neutral);
+  --color-status-info: var(--status-info);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
