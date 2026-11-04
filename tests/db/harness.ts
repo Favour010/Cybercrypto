@@ -25,6 +25,10 @@ export function migrationFiles(): string[] {
 export interface TestDb {
   client: Client;
   name: string;
+  /** Apply the migrations held back by `stopBefore` (for upgrade tests). */
+  applyRemaining(): Promise<void>;
+  /** A separate connection to the test database, optionally switched to a Supabase role. */
+  connect(role?: "service_role" | "authenticated" | "anon"): Promise<Client>;
   /** Run `fn` inside a transaction as `role` with JWT claims for `userId`; always rolled back. */
   as<T>(
     role: "anon" | "authenticated" | "service_role",
@@ -34,7 +38,12 @@ export interface TestDb {
   drop(): Promise<void>;
 }
 
-export async function createTestDb(): Promise<TestDb> {
+/**
+ * @param options.stopBefore  apply migrations only up to (not including) the
+ *   first file whose name starts with this prefix; the rest are applied by
+ *   `applyRemaining()`. Used to prove upgrades preserve existing data.
+ */
+export async function createTestDb(options: { stopBefore?: string } = {}): Promise<TestDb> {
   if (!TEST_DATABASE_URL) throw new Error("JOBSYNC_TEST_DATABASE_URL is not set");
   const name = `jobsync_test_${randomBytes(6).toString("hex")}`;
 
@@ -48,18 +57,41 @@ export async function createTestDb(): Promise<TestDb> {
   const client = new Client({ connectionString: url.toString() });
   await client.connect();
 
-  await client.query(readFileSync(SHIM, "utf8"));
-  for (const file of migrationFiles()) {
-    try {
-      await client.query(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"));
-    } catch (err) {
-      throw new Error(`Migration ${file} failed: ${(err as Error).message}`);
+  const files = migrationFiles();
+  const cut = options.stopBefore ? files.findIndex((f) => f.startsWith(options.stopBefore!)) : -1;
+  if (options.stopBefore && cut < 0) throw new Error(`No migration starts with ${options.stopBefore}`);
+  const now = cut < 0 ? files : files.slice(0, cut);
+  const later = cut < 0 ? [] : files.slice(cut);
+
+  // Each file runs in its own transaction, as `supabase db push` does.
+  const apply = async (list: string[]) => {
+    for (const file of list) {
+      try {
+        await client.query("begin");
+        await client.query(readFileSync(path.join(MIGRATIONS_DIR, file), "utf8"));
+        await client.query("commit");
+      } catch (err) {
+        await client.query("rollback");
+        throw new Error(`Migration ${file} failed: ${(err as Error).message}`);
+      }
     }
-  }
+  };
+
+  const extra: Client[] = [];
+  await client.query(readFileSync(SHIM, "utf8"));
+  await apply(now);
 
   return {
     client,
     name,
+    applyRemaining: () => apply(later),
+    async connect(role) {
+      const c = new Client({ connectionString: url.toString() });
+      await c.connect();
+      extra.push(c);
+      if (role) await c.query(`set role ${role}`);
+      return c;
+    },
     async as(role, userId, fn) {
       await client.query("begin");
       try {
@@ -73,6 +105,7 @@ export async function createTestDb(): Promise<TestDb> {
       }
     },
     async drop() {
+      for (const c of extra) await c.end().catch(() => undefined);
       await client.end();
       const a = new Client({ connectionString: TEST_DATABASE_URL });
       await a.connect();

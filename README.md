@@ -2,7 +2,7 @@
 
 JobSync receives maintenance work orders from an external job-management system (originally AroFlo), validates and stores them, routes each job to one or more of five client portals that have **no API**, and drives a Playwright browser worker to submit the work order into each portal. It tracks every confirmation, retry, failure and human intervention.
 
-> **Status: Phases 1–2 of 8 implemented** (Phase 2 awaiting review). Foundation, overview dashboard, the full Supabase schema with versioned migrations, authentication, role-based access control and the Jobs module. The migrations are tested against real PostgreSQL; **no live Supabase project has been connected yet**, so the running app shows a setup screen until credentials are provided. See [docs/database.md](docs/database.md) and [Build phases](#build-phases).
+> **Status: Phases 1–3 of 8 implemented** (Phase 3 awaiting review). Foundation and overview dashboard; the Supabase schema, authentication and role-based access; the Jobs module with manual creation and editing; and the secure external intake API (`POST /api/v1/jobs/intake`) with the Incoming Jobs page. Database logic is tested against real PostgreSQL; **no live Supabase project has been connected yet**. See [docs/database.md](docs/database.md), [docs/intake-api.md](docs/intake-api.md) and [Build phases](#build-phases).
 
 ```
 External source ──► Secure intake API ──► Supabase ──► Validation & routing ──► Automation queue
@@ -42,12 +42,14 @@ src/
     (auth)/                 # Public pages: login, setup, auth error
     (dashboard)/            # Signed-in app shell: sidebar + top bar
       page.tsx              # Overview dashboard (auto-refresh every 30 s)
-      jobs/                 # Jobs list (search, filters, sort, pagination) and jobs/[id] detail
+      jobs/                 # Jobs list, jobs/[id] detail, jobs/[id]/edit, jobs/new (Create Job)
+      incoming/             # Incoming Jobs: intake events, awaiting routing, API keys
       account/password/     # Set or change password
       incoming/ jobs/new/ portals/ queue/ executions/
       failed/ analytics/ settings/integrations/ audit/ settings/system/
     auth/confirm/route.ts   # Invitation / password-recovery email links
     api/health/route.ts     # Liveness + configuration probe (public)
+    api/v1/jobs/intake/     # External job intake (API key auth, machine-to-machine)
   proxy.ts                  # Route protection (Next.js 16 "proxy", formerly middleware)
   components/
     ui/                     # shadcn/ui primitives
@@ -60,16 +62,18 @@ src/
     domain/                 # Portals, job/task/execution statuses (single source of truth)
     metrics/                # Pure metric computation + labelled sample dataset (unit-tested)
     auth/                   # Permissions matrix, route rules, session/DAL, server actions
-    jobs/                   # Jobs URL query parsing (allow-listed, unit-tested)
+    jobs/                   # Job validation (shared by intake and forms), attachments, list query parsing
+    intake/                 # Intake handler, API keys, rate limiter, Supabase adapter
     data/                   # Server-only Supabase reads returning a typed DataResult
     supabase/               # Session client (RLS), proxy session refresh, service-role client
     env.ts                  # Zod-validated server environment (server-only)
     charts/palette.ts       # CVD-validated chart colour roles
 supabase/
-  migrations/               # Versioned, additive SQL migrations (8 files)
+  migrations/               # Versioned, additive SQL migrations (11 files)
   tests/supabase-shim.sql   # Supabase roles/auth/storage stand-ins for local PostgreSQL tests
 tests/db/                   # Database integration tests (real PostgreSQL)
 docs/database.md            # Schema, roles, setup and verification status
+docs/intake-api.md          # Intake API reference
 ```
 
 Planned top-level additions: `worker/` (the Playwright controller as a separate package, Phase 5) and `docs/n8n/` (Phase 6).
@@ -91,7 +95,7 @@ npm run dev                  # http://localhost:3000
 | `npm run typecheck` | Generate route types, then `tsc --noEmit` |
 | `npm run lint` | ESLint |
 
-Useful URLs: `/` (overview), `/?preview=sample` (labelled sample preview), `/jobs`, `/login`, `/setup`, `/api/health` (configuration probe).
+Useful URLs: `/` (overview), `/?preview=sample` (labelled sample preview), `/jobs`, `/jobs/new`, `/incoming`, `/login`, `/setup`, `/api/health` (configuration probe), `POST /api/v1/jobs/intake`.
 
 Without Supabase credentials every page redirects to `/setup`. For UI work without a project, run `JOBSYNC_DEV_AUTH_BYPASS=true npm run dev`: sign-in is skipped in local development only.
 
@@ -131,8 +135,8 @@ Charts cover the last 14 UTC days: job intake by source, outcomes by portal, wor
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1 | Foundation, design system, navigation, overview dashboard | ✅ Complete |
-| 2 | Supabase schema & versioned migrations, RLS, authentication & roles, Jobs module | ✅ Implemented, awaiting review |
-| 3 | Manual Create Job form and job editing, `POST /api/v1/jobs/intake` (auth, validation, idempotency, rate limit), Incoming Jobs | Planned |
+| 2 | Supabase schema & versioned migrations, RLS, authentication & roles, Jobs module | ✅ Complete |
+| 3 | Manual Create Job form and job editing, `POST /api/v1/jobs/intake` (auth, validation, idempotency, rate limit), Incoming Jobs, attachments | ✅ Implemented, awaiting review |
 | 4 | Routing engine (rules + reasons + human-review fallback), Portal Management (5 portals) | Planned |
 | 5 | Automation queue (per-portal tasks, concurrency 3, backoff, locks, idempotency keys), Playwright worker & adapters | Planned |
 | 6 | n8n intake & results webhooks (shared-secret/HMAC), result processing, Integration Settings with real tests | Planned |
@@ -148,7 +152,7 @@ See [docs/database.md](docs/database.md) for every table, constraint, role and p
 | Item | Needed from you | Without it |
 | --- | --- | --- |
 | Supabase project | URL, anon key, service-role key; apply migrations; invite users and promote an admin ([guide](docs/database.md)) | Every page redirects to `/setup` |
-| n8n | Webhook URL + shared secret (Phase 6) | Intake API still usable directly |
+| n8n | Webhook URL + shared secret (Phase 6) | Intake API still usable directly with an API key |
 | AroFlo | Authorised credentials and an approved integration method | Intake accepts AroFlo-shaped payloads via API/n8n only. **No direct AroFlo integration is claimed** |
 | Demo portals | Network access to `jobsync-portal-tracker.lovable.app` from the worker host | The development sandbox used to build Phase 1 blocks this host, so Playwright runs must happen where it is reachable |
 | LIVE mode | Explicit authorisation plus portal credentials stored server-side | Everything runs in DRY_RUN |

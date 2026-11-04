@@ -1,4 +1,15 @@
-import { Archive, ArrowLeft, FileText, History, Paperclip, Route, ShieldCheck, UserRound } from "lucide-react";
+import {
+  Archive,
+  ArrowLeft,
+  CircleCheck,
+  FileText,
+  History,
+  Paperclip,
+  Pencil,
+  Route,
+  ShieldCheck,
+  UserRound,
+} from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -33,14 +44,34 @@ export default function JobDetailPage(props: PageProps<"/jobs/[id]">) {
         </Link>
       </Button>
       <Suspense fallback={<DetailSkeleton />}>
-        <JobDetailContent params={props.params} />
+        <JobDetailContent params={props.params} searchParams={props.searchParams} />
       </Suspense>
     </div>
   );
 }
 
-async function JobDetailContent({ params }: { params: PageProps<"/jobs/[id]">["params"] }) {
+const NOTICES: Record<string, { title: string; body: string }> = {
+  created: {
+    title: "Job created",
+    body: "Saved as a manual job. It has not been submitted to any portal; assigned portals each have a pending submission task.",
+  },
+  duplicate: {
+    title: "This form was already submitted",
+    body: "The job below was created by your earlier submission. No second job was created.",
+  },
+  updated: { title: "Changes saved", body: "Nothing was re-sent to any portal." },
+};
+
+async function JobDetailContent({
+  params,
+  searchParams,
+}: {
+  params: PageProps<"/jobs/[id]">["params"];
+  searchParams: PageProps<"/jobs/[id]">["searchParams"];
+}) {
   const { id } = await params;
+  const { notice: noticeKey } = await searchParams;
+  const notice = typeof noticeKey === "string" ? NOTICES[noticeKey] : undefined;
   const auth = await requireUser();
   if (!auth.supabase) return <DataStateNotice result={{ kind: "not_configured", missing: missingAuthConfig() }} />;
 
@@ -51,6 +82,7 @@ async function JobDetailContent({ params }: { params: PageProps<"/jobs/[id]">["p
   const detail = result.data;
   const { job } = detail;
   const canArchive = can(auth.user.role, "jobs.archive");
+  const canEdit = can(auth.user.role, "jobs.edit") && !job.archived_at;
 
   return (
     <>
@@ -65,8 +97,25 @@ async function JobDetailContent({ params }: { params: PageProps<"/jobs/[id]">["p
             <SourceBadge sourceType={job.source_type} source={job.source} />
           </div>
         </div>
-        {canArchive ? <ArchiveButton jobId={job.id} archived={Boolean(job.archived_at)} /> : null}
+        <div className="flex items-start gap-2">
+          {canEdit ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/jobs/${job.id}/edit`}>
+                <Pencil /> Edit job
+              </Link>
+            </Button>
+          ) : null}
+          {canArchive ? <ArchiveButton jobId={job.id} archived={Boolean(job.archived_at)} /> : null}
+        </div>
       </div>
+
+      {notice ? (
+        <Alert variant="info">
+          <CircleCheck />
+          <AlertTitle>{notice.title}</AlertTitle>
+          <AlertDescription>{notice.body}</AlertDescription>
+        </Alert>
+      ) : null}
 
       {job.archived_at ? (
         <Alert>

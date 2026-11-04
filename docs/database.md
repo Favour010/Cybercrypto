@@ -1,16 +1,19 @@
 # JobSync database, authentication and access control
 
-Phase 2 delivers the Supabase schema, versioned migrations, authentication, role-based access control and the Jobs module.
+Phase 2 delivered the Supabase schema, versioned migrations, authentication, role-based access control and the Jobs module. Phase 3 added organisation-scoped duplicate detection, the shared ingestion and editing functions, intake API keys and rate limiting.
 
 ## Verification status
 
 | What | Status |
 | --- | --- |
-| Migrations apply cleanly, in order, to PostgreSQL 16 | ✅ Tested (`npm run test:db`, 32 tests) |
+| Migrations apply cleanly, in order, to PostgreSQL 16 | ✅ Tested (`npm run test:db`, 82 tests) |
+| Upgrade 0009 keeps existing rows and duplicate protection | ✅ Tested (`tests/db/upgrade.test.ts`) |
+| Intake API request handling end to end (auth, validation, duplicates, organisations, rate limits) | ✅ Tested against the real SQL functions (`tests/db/intake.test.ts`) |
+| Manual creation and editing rules | ✅ Tested as signed-in roles (`tests/db/ingestion.test.ts`) |
 | Constraints, triggers, audit log, Row Level Security, Storage policies | ✅ Tested on real PostgreSQL with Supabase's roles and `auth.uid()` reproduced by `supabase/tests/supabase-shim.sql` |
 | Every column the dashboard reads exists | ✅ Tested against `src/lib/data/overview-contract.ts` |
 | Proxy / route protection, login form, dev-bypass refusal in production | ✅ Tested against the production build |
-| **A live Supabase project** (Auth, PostgREST, Storage) end to end | ❌ **Not tested.** No project credentials were available. The supabase-js queries in `src/lib/data/*` are type-checked and built, but have not run against PostgREST |
+| **A live Supabase project** (Auth, PostgREST, Storage) end to end | ❌ **Not tested.** No project credentials were available. The supabase-js calls (`src/lib/data/*`, `src/lib/intake/supabase-deps.ts`, the form actions and Storage uploads) are type-checked and built, but have not run against PostgREST or Storage |
 
 ## Schema
 
@@ -26,6 +29,9 @@ Migrations live in `supabase/migrations/` and are **additive only**: no `DROP`, 
 | `…0600_row_level_security` | Role helpers, grants, RLS policies |
 | `…0700_auth_profiles` | Profile creation for new Supabase Auth users |
 | `…0800_storage` | Private `job-attachments` bucket and its policies |
+| `…0900_org_scoped_external_job_uniqueness` | Duplicate key becomes `(organisation_id, source, external_job_id)`. Adds the new constraint before removing the old one; no rows change |
+| `…1000_api_keys_and_rate_limits` | `api_keys` (hashed intake keys), `rate_limit_counters`, `consume_rate_limit()` |
+| `…1100_job_ingestion` | `ingest_job()`, `create_manual_job()`, `update_job()`, provenance guard, `submission_token`, Storage delete policy |
 
 ### Tables
 
@@ -34,7 +40,7 @@ Migrations live in `supabase/migrations/` and are **additive only**: no `DROP`, 
 | `organisations` | Tenant boundary | Unique `slug` |
 | `profiles` | One per `auth.users` row: organisation, role, active flag | New users are `viewer` |
 | `portals` | The five client portals | Unique, **immutable** `slug`; never "connected" without a recorded test |
-| `jobs` | Work orders | **Unique `(source, external_job_id)`**; external jobs must have an external ID; reference `JS-000123`; archived, never deleted |
+| `jobs` | Work orders | **Unique `(organisation_id, source, external_job_id)`**; unique `(organisation_id, submission_token)`; external jobs must have an external ID; provenance (source, external ID, original payload) immutable; reference `JS-000123`; archived, never deleted |
 | `job_contacts` | Contact people | One primary contact per job |
 | `job_attachments` | Files in Storage or HTTPS URLs | 25 MB limit, unique storage path |
 | `routing_rules` | Configurable routing conditions → portal | At least one condition |
@@ -44,6 +50,18 @@ Migrations live in `supabase/migrations/` and are **additive only**: no `DROP`, 
 | `integration_settings` | Per-organisation integration config | Ciphertext column unreadable by users |
 | `integration_events` | Inbound/outbound integration messages | Written by the server only |
 | `audit_logs` | Change history | Append-only (UPDATE/DELETE/TRUNCATE blocked) |
+| `api_keys` | Intake API credentials per organisation | SHA-256 hash only; hash unreadable by users; allowed sources; expiry and revocation |
+| `rate_limit_counters` | Fixed-window counters, one row per bucket | Service role only |
+
+### Job functions
+
+| Function | Caller | Purpose |
+| --- | --- | --- |
+| `ingest_job(...)` | service role (intake API) | The single ingestion path: job, contact, attachments, explicit destinations and one pending task per destination, in one transaction. Duplicates return the existing job with `payload_matches` |
+| `create_manual_job(...)` | operators (Create Job form) | Wraps `ingest_job`; organisation and creator come from the session; attachments must sit in `<org>/<job>/` |
+| `update_job(...)` | operators (Edit Job form) | Optimistic concurrency; blocked while a submission is processing; acknowledgement required after a portal received the job; never re-queues a portal; only never-attempted destinations can be removed |
+
+Error codes raised by these functions: `JSU01` unknown portal, `JSU02` portal disabled, `JSU03` stale edit, `JSU04` locked by automation, `JSU05` not permitted, `JSU06` not found, `JSU07` acknowledgement needed, `JSU08` archived, `JSU09` invalid attachment path.
 
 `portal_slug` on tasks and executions is guarded by a composite foreign key to `portals (id, slug)`, so it cannot disagree with `portal_id`.
 
@@ -125,6 +143,5 @@ Without `JOBSYNC_TEST_DATABASE_URL` the database suite is skipped and `npm test`
 
 ## Notes for later phases
 
-- **Phase 3 (intake):** insert jobs with the service role, record each request in `integration_events`, and rely on the `(source, external_job_id)` unique key for idempotency (`on conflict do nothing` → report `duplicate`).
 - **Phase 5 (queue):** claim tasks with `status in ('pending','retry_scheduled') and next_attempt_at <= now()` (indexed), skip jobs where `archived_at is not null`, and pass `idempotency_key` to the portal adapter.
 - **Phase 6 (settings):** encrypt secrets with AES-256-GCM using a server key before writing `secret_ciphertext`; store only a short `secret_hint`.

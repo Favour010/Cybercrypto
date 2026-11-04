@@ -96,10 +96,12 @@ describe.skipIf(!TEST_DATABASE_URL)("database schema (real PostgreSQL)", () => {
       const files = migrationFiles();
       expect(files.length).toBeGreaterThanOrEqual(8);
       for (const f of files) {
-        const text = readFileSync(path.resolve(__dirname, "../../supabase/migrations", f), "utf8").replace(
-          /--.*$/gm,
-          "",
-        );
+        const text = readFileSync(path.resolve(__dirname, "../../supabase/migrations", f), "utf8")
+          .replace(/--.*$/gm, "")
+          // Function bodies may delete rows they manage at run time (e.g. an
+          // unstarted task when an operator removes a destination); the rule is
+          // that a migration itself never deletes existing data.
+          .replace(/\$\$[\s\S]*?\$\$/g, "");
         expect(text, f).not.toMatch(/\bdrop\s+(table|column|schema|type)\b/i);
         expect(text, f).not.toMatch(/\btruncate\s+(table\s+)?public\./i);
         expect(text, f).not.toMatch(/\bdelete\s+from\b/i);
@@ -144,9 +146,15 @@ describe.skipIf(!TEST_DATABASE_URL)("database schema (real PostgreSQL)", () => {
       expect(rows[0].reference).toMatch(/^JS-\d{6}$/);
     });
 
-    it("rejects a duplicate source + external_job_id import", async () => {
+    it("rejects a duplicate organisation + source + external_job_id import", async () => {
       await insertJob({ external_job_id: "ARO-2026-00125" });
       await expectPgError(insertJob({ external_job_id: "ARO-2026-00125" }), UNIQUE_VIOLATION);
+    });
+
+    it("allows the same source + external ID in a different organisation", async () => {
+      await insertJob({ external_job_id: "ARO-SHARED-77" });
+      await expect(insertJob({ external_job_id: "ARO-SHARED-77", organisation_id: orgB })).resolves.toBeTruthy();
+      await expectPgError(insertJob({ external_job_id: "ARO-SHARED-77", organisation_id: orgB }), UNIQUE_VIOLATION);
     });
 
     it("allows the same external ID from a different source", async () => {
