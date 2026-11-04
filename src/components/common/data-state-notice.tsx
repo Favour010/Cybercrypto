@@ -14,7 +14,7 @@ export function DataStateNotice({ result }: { result: DataResult<unknown> }) {
           <AlertTitle>Database not connected</AlertTitle>
           <AlertDescription>
             <p>
-              Supabase credentials are not configured, so no statistics can be shown. Missing:{" "}
+              Supabase credentials are not configured, so no data can be shown. Missing:{" "}
               {result.missing.map((m, i) => (
                 <span key={m}>
                   {i > 0 ? ", " : ""}

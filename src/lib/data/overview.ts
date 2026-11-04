@@ -3,7 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { AWAITING_JOB_STATUSES, BACKLOG_TASK_STATUSES } from "@/lib/domain/status";
-import { getSupabaseConfigState } from "@/lib/env";
+import { OVERVIEW_QUERY_CONTRACT as C } from "@/lib/data/overview-contract";
 import {
   OVERVIEW_WINDOW_DAYS,
   computeOverview,
@@ -15,7 +15,6 @@ import {
   type OverviewTaskRow,
 } from "@/lib/metrics/overview";
 import { buildSampleOverviewDataset } from "@/lib/metrics/sample-dataset";
-import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { isMissingRelation, type DataResult } from "@/lib/data/result";
 
 class QueryError extends Error {
@@ -65,7 +64,7 @@ async function selectAll<T>(
 
 async function loadFromDatabase(db: SupabaseClient, now: Date): Promise<OverviewSnapshot> {
   const since = windowStart(now, OVERVIEW_WINDOW_DAYS).toISOString();
-  const activeJobs = (q: SelectQuery) => q.is("archived_at", null);
+  const activeJobs = (q: SelectQuery) => q.is(C.jobs.activeFilterColumn, null);
 
   const [
     jobsTotal,
@@ -108,29 +107,40 @@ async function loadFromDatabase(db: SupabaseClient, now: Date): Promise<Overview
   };
 
   const [jobs, tasks, executions, running] = await Promise.all([
-    selectAll<OverviewJobRow>(db, "jobs", "status, source_type, received_at", "received_at", since),
+    selectAll<OverviewJobRow>(db, C.jobs.table, C.jobs.columns, C.jobs.timeColumn, since),
     selectAll<OverviewTaskRow>(
       db,
-      "submission_tasks",
-      "portal_slug, status, execution_mode, created_at, completed_at",
-      "created_at",
+      C.submissionTasks.table,
+      C.submissionTasks.columns,
+      C.submissionTasks.timeColumn,
       since,
     ),
     selectAll<OverviewExecutionRow>(
       db,
-      "automation_executions",
-      "status, mode, worker_id, started_at, completed_at",
-      "started_at",
+      C.automationExecutions.table,
+      C.automationExecutions.columns,
+      C.automationExecutions.timeColumn,
       since,
     ),
-    db.from("automation_executions").select("worker_id").eq("status", "running").limit(1000),
+    db.from(C.automationExecutions.table).select("worker_id").eq("status", "running").limit(1000),
   ]);
   if (running.error) throw new QueryError(running.error.message, running.error.code);
 
   return computeOverview(counts, { jobs, tasks, executions, runningExecutions: running.data ?? [] }, now);
 }
 
-export async function getOverview(options: { preview?: "sample" } = {}): Promise<DataResult<OverviewSnapshot>> {
+/**
+ * Overview figures for the signed-in user's organisation.
+ *
+ * `db` is the user's session client, so every count is filtered by Row Level
+ * Security; the service-role client is deliberately not used here. A null
+ * client means Supabase is not configured and is reported as such.
+ */
+export async function getOverview(options: {
+  preview?: "sample";
+  db: SupabaseClient | null;
+  missing?: string[];
+}): Promise<DataResult<OverviewSnapshot>> {
   const now = new Date();
 
   if (options.preview === "sample") {
@@ -138,11 +148,15 @@ export async function getOverview(options: { preview?: "sample" } = {}): Promise
     return { kind: "ok", source: "sample", data: computeOverview(counts, window, now) };
   }
 
-  const config = getSupabaseConfigState();
-  if (!config.configured) return { kind: "not_configured", missing: config.missing };
-
-  const db = getSupabaseAdmin();
-  if (!db) return { kind: "not_configured", missing: ["SUPABASE_SERVICE_ROLE_KEY"] };
+  const { db } = options;
+  if (!db) {
+    return {
+      kind: "not_configured",
+      missing: options.missing?.length
+        ? options.missing
+        : ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"],
+    };
+  }
 
   try {
     return { kind: "ok", source: "database", data: await loadFromDatabase(db, now) };

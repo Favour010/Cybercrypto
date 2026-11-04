@@ -6,10 +6,14 @@ import { usePathname } from "next/navigation";
 import { NAV_SECTIONS, findActiveNavItem } from "@/lib/config/navigation";
 import { cn } from "@/lib/utils";
 
+/** Highlights the current page. Needs the URL, so render it inside <Suspense>. */
 export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const active = findActiveNavItem(pathname);
+  return <SidebarNavList activeHref={findActiveNavItem(pathname)?.href} onNavigate={onNavigate} />;
+}
 
+/** The navigation itself, without reading the URL (used as the Suspense fallback). */
+export function SidebarNavList({ activeHref, onNavigate }: { activeHref?: string; onNavigate?: () => void }) {
   return (
     <nav aria-label="Main" className="flex flex-col gap-6">
       {NAV_SECTIONS.map((section) => (
@@ -19,7 +23,7 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           </div>
           <ul className="flex flex-col gap-0.5">
             {section.items.map((item) => {
-              const isActive = active?.href === item.href;
+              const isActive = activeHref === item.href;
               const Icon = item.icon;
               return (
                 <li key={item.href}>

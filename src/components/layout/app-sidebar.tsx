@@ -1,5 +1,7 @@
+import { Suspense } from "react";
+
 import { Brand } from "@/components/layout/brand";
-import { SidebarNav } from "@/components/layout/sidebar-nav";
+import { SidebarNav, SidebarNavList } from "@/components/layout/sidebar-nav";
 
 export function AppSidebar() {
   return (
@@ -8,7 +10,9 @@ export function AppSidebar() {
         <Brand />
       </div>
       <div className="flex-1 overflow-y-auto px-3 py-5">
-        <SidebarNav />
+        <Suspense fallback={<SidebarNavList />}>
+          <SidebarNav />
+        </Suspense>
       </div>
       <div className="border-sidebar-border text-sidebar-muted border-t px-5 py-4 text-[11px] leading-relaxed">
         Demo environment · simulated client portals

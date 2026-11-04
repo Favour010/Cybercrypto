@@ -82,3 +82,20 @@ export const BACKLOG_TASK_STATUSES: readonly TaskStatus[] = ["pending", "retry_s
 /** Status of one browser automation attempt (an automation_executions row). */
 export const EXECUTION_STATUSES = ["running", "succeeded", "failed", "cancelled"] as const;
 export type ExecutionStatus = (typeof EXECUTION_STATUSES)[number];
+
+export const JOB_PRIORITIES = ["low", "normal", "high", "urgent"] as const;
+export type JobPriority = (typeof JOB_PRIORITIES)[number];
+
+export const JOB_PRIORITY_META: Record<JobPriority, { label: string; tone: StatusTone }> = {
+  low: { label: "Low", tone: "neutral" },
+  normal: { label: "Normal", tone: "info" },
+  high: { label: "High", tone: "serious" },
+  urgent: { label: "Urgent", tone: "critical" },
+};
+
+export const EXECUTION_STATUS_META: Record<ExecutionStatus, { label: string; tone: StatusTone }> = {
+  running: { label: "Running", tone: "info" },
+  succeeded: { label: "Succeeded", tone: "good" },
+  failed: { label: "Failed", tone: "critical" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
+};
