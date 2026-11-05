@@ -1,8 +1,12 @@
+import { DemoProvider } from "@/components/demo/demo-provider";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { Topbar } from "@/components/layout/topbar";
+import { isDemoMode } from "@/lib/data-mode";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  return (
+  // Demo data layer: the whole signed-in shell shares one browser-side store.
+  const demo = isDemoMode();
+  const shell = (
     <div className="flex min-h-svh">
       <AppSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
@@ -13,4 +17,5 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </div>
     </div>
   );
+  return demo ? <DemoProvider>{shell}</DemoProvider> : shell;
 }

@@ -1,5 +1,6 @@
 import { connection, NextResponse } from "next/server";
 
+import { getDataMode } from "@/lib/data-mode";
 import { getServerEnv, getSupabaseConfigState } from "@/lib/env";
 
 /**
@@ -14,6 +15,7 @@ export async function GET() {
     status: "ok",
     service: "jobsync",
     time: new Date().toISOString(),
+    data_mode: getDataMode(),
     execution_mode: env.JOBSYNC_EXECUTION_MODE,
     live_submissions_allowed: env.JOBSYNC_ALLOW_LIVE_SUBMISSIONS,
     integrations: {

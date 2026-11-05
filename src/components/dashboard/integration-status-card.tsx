@@ -26,9 +26,17 @@ export async function IntegrationStatusCard() {
       configured: serviceRole,
       note: serviceRole ? "Server-only key present (used from Phase 3)" : "Not set; needed for intake and the queue",
     },
-    { name: "External intake API", configured: false, note: "Endpoint delivered in Phase 3" },
-    { name: "n8n workflows", configured: false, note: "Webhooks delivered in Phase 6" },
-    { name: "Playwright controller", configured: false, note: "Worker delivered in Phase 5" },
+    {
+      name: "External intake API",
+      configured: serviceRole,
+      note: serviceRole ? "POST /api/v1/jobs/intake enabled (API keys on Incoming Jobs)" : "Needs the service-role key",
+    },
+    {
+      name: "n8n workflows",
+      configured: false,
+      note: "Outbound settings available in demo mode; server delivery not built",
+    },
+    { name: "Playwright controller", configured: false, note: "Real worker not built; demo mode simulates runs" },
   ];
 
   return (

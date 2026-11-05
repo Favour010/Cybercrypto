@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthConfig, isDevAuthBypassActive } from "@/lib/auth/config";
 import { safeNextPath } from "@/lib/auth/routes";
+import { isDemoMode } from "@/lib/data-mode";
 
 export const metadata: Metadata = { title: "Sign in" };
 
@@ -34,6 +35,25 @@ async function LoginBody({ searchParams }: { searchParams: PageProps<"/login">["
   const params = await searchParams;
   const rawNext = typeof params.next === "string" ? params.next : undefined;
   const next = rawNext ? safeNextPath(rawNext) : undefined;
+
+  if (isDemoMode()) {
+    return (
+      <Alert variant="info">
+        <TriangleAlert />
+        <AlertTitle>No sign-in needed in demo mode</AlertTitle>
+        <AlertDescription>
+          <p>
+            JobSync is running on the demo data layer: sample data stored in your own browser, with simulated portal
+            runs.{" "}
+            <Link href="/" className="font-medium underline underline-offset-2">
+              Open the dashboard
+            </Link>
+            .
+          </p>
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   if (!getAuthConfig()) {
     return isDevAuthBypassActive() ? (

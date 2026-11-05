@@ -4,8 +4,10 @@ import { Suspense } from "react";
 import { ExecutionModeBadge } from "@/components/layout/execution-mode-badge";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { UserMenu } from "@/components/layout/user-menu";
+import { DemoUserMenu } from "@/components/demo/demo-user-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthState } from "@/lib/auth/session";
+import { isDemoMode } from "@/lib/data-mode";
 import { getServerEnv } from "@/lib/env";
 
 export function Topbar() {
@@ -30,6 +32,20 @@ export function Topbar() {
 async function RuntimeStatus() {
   await connection();
   const env = getServerEnv();
+  if (isDemoMode()) {
+    return (
+      <>
+        <span
+          className="hidden items-center rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 sm:inline-flex dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"
+          title="Demo data layer: sample data stored in this browser. Portal runs are simulated."
+        >
+          Demo data
+        </span>
+        <ExecutionModeBadge mode="dry_run" liveAllowed={false} />
+        <DemoUserMenu />
+      </>
+    );
+  }
   const auth = await getAuthState();
   return (
     <>

@@ -16,6 +16,9 @@ import { requireUser } from "@/lib/auth/session";
 import { listJobs } from "@/lib/data/jobs";
 import type { DataResult } from "@/lib/data/result";
 import { hasActiveFilters, jobsHref, parseJobsQuery } from "@/lib/jobs/query";
+import { DemoReady } from "@/components/demo/demo-provider";
+import { DemoJobs } from "@/components/demo/pages/demo-jobs";
+import { isDemoMode } from "@/lib/data-mode";
 
 export const metadata: Metadata = { title: "Jobs" };
 
@@ -26,9 +29,17 @@ export default function JobsPage(props: PageProps<"/jobs">) {
         title="Jobs"
         description="Every work order in JobSync, whether received from an external system or entered manually."
       />
-      <Suspense fallback={<JobsSkeleton />}>
-        <JobsContent searchParams={props.searchParams} />
-      </Suspense>
+      {isDemoMode() ? (
+        <Suspense fallback={<JobsSkeleton />}>
+          <DemoReady>
+            <DemoJobs />
+          </DemoReady>
+        </Suspense>
+      ) : (
+        <Suspense fallback={<JobsSkeleton />}>
+          <JobsContent searchParams={props.searchParams} />
+        </Suspense>
+      )}
     </div>
   );
 }

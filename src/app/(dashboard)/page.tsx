@@ -17,19 +17,27 @@ import {
 } from "@/components/dashboard/overview-charts";
 import { OverviewKpis } from "@/components/dashboard/overview-kpis";
 import { OverviewSkeleton } from "@/components/dashboard/overview-skeleton";
+import { DemoReady } from "@/components/demo/demo-provider";
+import { DemoOverview } from "@/components/demo/pages/demo-overview";
 import { PipelineCard } from "@/components/dashboard/pipeline-card";
 import { Button } from "@/components/ui/button";
 import { missingAuthConfig } from "@/lib/auth/config";
 import { requireUser } from "@/lib/auth/session";
+import { isDemoMode } from "@/lib/data-mode";
 import { getOverview } from "@/lib/data/overview";
 import { isSnapshotEmpty } from "@/lib/metrics/overview";
 
 export default function OverviewPage(props: PageProps<"/">) {
+  const demo = isDemoMode();
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Overview"
-        description="Live operational view of job intake, portal routing and browser automation. All figures are read from the JobSync database."
+        description={
+          demo
+            ? "Operational view of job intake, portal routing and browser automation, calculated from the demo data stored in this browser."
+            : "Live operational view of job intake, portal routing and browser automation. All figures are read from the JobSync database."
+        }
         actions={
           <Button asChild variant="outline" size="sm">
             <Link href="/jobs/new">
@@ -38,9 +46,16 @@ export default function OverviewPage(props: PageProps<"/">) {
           </Button>
         }
       />
-      <Suspense fallback={<OverviewSkeleton />}>
-        <OverviewContent searchParams={props.searchParams} />
-      </Suspense>
+      {demo ? (
+        // Rendered inside the page segment so it always renders (loading first).
+        <DemoReady>
+          <DemoOverview />
+        </DemoReady>
+      ) : (
+        <Suspense fallback={<OverviewSkeleton />}>
+          <OverviewContent searchParams={props.searchParams} />
+        </Suspense>
+      )}
     </div>
   );
 }

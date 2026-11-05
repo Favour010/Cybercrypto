@@ -59,3 +59,21 @@ export function formatBytes(n: number | null | undefined): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** "in 12s", "3m ago", "2h ago", "in 1d" relative to `now`. */
+export function formatRelative(value: string | Date, now: Date): string {
+  const t = typeof value === "string" ? new Date(value).getTime() : value.getTime();
+  if (Number.isNaN(t)) return "—";
+  const diff = t - now.getTime();
+  const abs = Math.abs(diff);
+  const unit =
+    abs < 60_000
+      ? `${Math.max(1, Math.round(abs / 1000))}s`
+      : abs < 3_600_000
+        ? `${Math.round(abs / 60_000)}m`
+        : abs < 86_400_000
+          ? `${Math.round(abs / 3_600_000)}h`
+          : `${Math.round(abs / 86_400_000)}d`;
+  if (abs < 1000) return "now";
+  return diff > 0 ? `in ${unit}` : `${unit} ago`;
+}

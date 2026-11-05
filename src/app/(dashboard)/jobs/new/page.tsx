@@ -13,6 +13,9 @@ import { can } from "@/lib/auth/permissions";
 import { requireUser } from "@/lib/auth/session";
 import { EMPTY_JOB_FORM, getFormPortals } from "@/lib/data/job-form";
 import { PORTALS } from "@/lib/domain/portals";
+import { DemoReady } from "@/components/demo/demo-provider";
+import { DemoCreateJob } from "@/components/demo/pages/demo-jobs";
+import { isDemoMode } from "@/lib/data-mode";
 
 export const metadata: Metadata = { title: "Create job" };
 
@@ -23,9 +26,15 @@ export default function CreateJobPage() {
         title="Create Job"
         description="Enter a work order manually. It joins the same pipeline as jobs received from external systems and is labelled as Manual."
       />
-      <Suspense fallback={<Skeleton className="h-[640px] rounded-xl" />}>
-        <CreateJobContent />
-      </Suspense>
+      {isDemoMode() ? (
+        <DemoReady>
+          <DemoCreateJob />
+        </DemoReady>
+      ) : (
+        <Suspense fallback={<Skeleton className="h-[640px] rounded-xl" />}>
+          <CreateJobContent />
+        </Suspense>
+      )}
     </div>
   );
 }

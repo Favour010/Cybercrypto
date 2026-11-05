@@ -4,62 +4,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { jobIdSchema } from "@/lib/data/jobs";
 import { isMissingRelation, type DataResult } from "@/lib/data/result";
-import type { PortalSlug } from "@/lib/domain/portals";
-import type { JobPriority, TaskStatus } from "@/lib/domain/status";
+import type { TaskStatus } from "@/lib/domain/status";
+import type { EditableJob, FormPortal } from "@/lib/jobs/form-types";
 
-export interface FormPortal {
-  slug: PortalSlug;
-  name: string;
-  is_enabled: boolean;
-}
-
-export interface JobFormValues {
-  customer_name: string;
-  service_address: string;
-  category: string;
-  priority: JobPriority;
-  description: string;
-  instructions: string;
-  scheduled_date: string;
-  scheduled_time: string;
-  technician: string;
-  contact_name: string;
-  contact_email: string;
-  contact_phone: string;
-  destinations: string[];
-}
-
-export const EMPTY_JOB_FORM: JobFormValues = {
-  customer_name: "",
-  service_address: "",
-  category: "",
-  priority: "normal",
-  description: "",
-  instructions: "",
-  scheduled_date: "",
-  scheduled_time: "",
-  technician: "",
-  contact_name: "",
-  contact_email: "",
-  contact_phone: "",
-  destinations: [],
-};
-
-export interface EditableJob {
-  id: string;
-  reference: string;
-  source_type: "external" | "manual";
-  source: string;
-  external_job_id: string | null;
-  archived: boolean;
-  updated_at: string;
-  values: JobFormValues;
-  /** Destinations whose task was attempted: they cannot be removed. */
-  lockedDestinations: string[];
-  submittedCount: number;
-  processing: boolean;
-  attachments: { id: string; file_name: string; size_bytes: number | null }[];
-}
+export { EMPTY_JOB_FORM, type EditableJob, type FormPortal, type JobFormValues } from "@/lib/jobs/form-types";
 
 function fail(error: { code?: string; message: string }): DataResult<never> {
   if (isMissingRelation(error)) {

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { getAuthConfig, isDevAuthBypassActive } from "@/lib/auth/config";
 import { classifyRoute } from "@/lib/auth/routes";
+import { isDemoMode } from "@/lib/data-mode";
 import { updateSession, withSessionCookies } from "@/lib/supabase/proxy-session";
 
 /**
@@ -16,6 +17,11 @@ export async function proxy(request: NextRequest) {
 
   // Machine APIs authenticate each request themselves (API key / HMAC).
   if (kind === "machine_api" || kind === "public_api") return NextResponse.next();
+
+  // Demo data layer: there is no server-side data to protect (everything lives
+  // in the visitor's own browser), so pages need no sign-in. API routes still
+  // apply their own checks and rate limits.
+  if (isDemoMode()) return NextResponse.next();
 
   const config = getAuthConfig();
   if (!config) {

@@ -2,7 +2,7 @@
 
 import { LoaderCircle, Lock, Paperclip, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { cloneElement, useActionState, useState, useSyncExternalStore } from "react";
+import { cloneElement, useActionState, useId, useState, useSyncExternalStore } from "react";
 
 import type { JobFormState } from "@/app/(dashboard)/jobs/form-actions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -45,6 +45,7 @@ interface Props {
 
 const noopSubscribe = () => () => {};
 
+
 /** RFC 4122 v4 UUID; falls back to getRandomValues where randomUUID is unavailable. */
 function uuidV4(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -68,6 +69,8 @@ export function JobForm({ mode, action, initial, portals, job, cancelHref }: Pro
   );
   const submissionToken = mode === "create" && hydrated ? token : null;
   const [state, formAction, pending] = useActionState(action, { attempt: 0 });
+  const prefix = useId();
+  const fid = (name: string) => `${prefix}-${name}`;
   const v = state.values ?? initial;
   const err = state.fieldErrors ?? {};
   const locked = new Set(job?.lockedDestinations ?? []);
@@ -108,45 +111,45 @@ export function JobForm({ mode, action, initial, portals, job, cancelHref }: Pro
         <div className="flex flex-col gap-5 xl:col-span-2">
           <Section title="Customer and site">
             <Grid>
-              <Field id="customer_name" label="Customer / company" required error={err.customer_name} wide>
+              <Field id={fid("customer_name")} label="Customer / company" required error={err.customer_name} wide>
                 <Input
-                  id="customer_name"
+                  id={fid("customer_name")}
                   name="customer_name"
                   defaultValue={v.customer_name}
                   maxLength={200}
                   required
                 />
               </Field>
-              <Field id="service_address" label="Service address" required error={err.service_address} wide>
+              <Field id={fid("service_address")} label="Service address" required error={err.service_address} wide>
                 <Input
-                  id="service_address"
+                  id={fid("service_address")}
                   name="service_address"
                   defaultValue={v.service_address}
                   maxLength={500}
                   required
                 />
               </Field>
-              <Field id="contact_name" label="Contact person" error={err.contact_name}>
+              <Field id={fid("contact_name")} label="Contact person" error={err.contact_name}>
                 <Input
-                  id="contact_name"
+                  id={fid("contact_name")}
                   name="contact_name"
                   defaultValue={v.contact_name}
                   maxLength={200}
                   autoComplete="off"
                 />
               </Field>
-              <Field id="contact_email" label="Contact email" error={err.contact_email}>
+              <Field id={fid("contact_email")} label="Contact email" error={err.contact_email}>
                 <Input
-                  id="contact_email"
+                  id={fid("contact_email")}
                   name="contact_email"
                   type="email"
                   defaultValue={v.contact_email}
                   maxLength={254}
                 />
               </Field>
-              <Field id="contact_phone" label="Contact phone" error={err.contact_phone}>
+              <Field id={fid("contact_phone")} label="Contact phone" error={err.contact_phone}>
                 <Input
-                  id="contact_phone"
+                  id={fid("contact_phone")}
                   name="contact_phone"
                   type="tel"
                   defaultValue={v.contact_phone}
@@ -157,24 +160,24 @@ export function JobForm({ mode, action, initial, portals, job, cancelHref }: Pro
           </Section>
 
           <Section title="Work order">
-            <datalist id="category-options">
+            <datalist id={fid("category-options")}>
               {CATEGORY_SUGGESTIONS.map((c) => (
                 <option key={c} value={c} />
               ))}
             </datalist>
             <Grid>
-              <Field id="category" label="Job category" required error={err.category}>
+              <Field id={fid("category")} label="Job category" required error={err.category}>
                 <Input
-                  id="category"
+                  id={fid("category")}
                   name="category"
-                  list="category-options"
+                  list={fid("category-options")}
                   defaultValue={v.category}
                   maxLength={100}
                   required
                 />
               </Field>
-              <Field id="priority" label="Priority" error={err.priority}>
-                <NativeSelect id="priority" name="priority" defaultValue={v.priority}>
+              <Field id={fid("priority")} label="Priority" error={err.priority}>
+                <NativeSelect id={fid("priority")} name="priority" defaultValue={v.priority}>
                   {JOB_PRIORITIES.map((p) => (
                     <option key={p} value={p}>
                       {JOB_PRIORITY_META[p].label}
@@ -182,9 +185,9 @@ export function JobForm({ mode, action, initial, portals, job, cancelHref }: Pro
                   ))}
                 </NativeSelect>
               </Field>
-              <Field id="description" label="Job description" required error={err.description} wide>
+              <Field id={fid("description")} label="Job description" required error={err.description} wide>
                 <Textarea
-                  id="description"
+                  id={fid("description")}
                   name="description"
                   rows={4}
                   defaultValue={v.description}
@@ -192,23 +195,23 @@ export function JobForm({ mode, action, initial, portals, job, cancelHref }: Pro
                   required
                 />
               </Field>
-              <Field id="instructions" label="Work instructions" error={err.instructions} wide>
+              <Field id={fid("instructions")} label="Work instructions" error={err.instructions} wide>
                 <Textarea
-                  id="instructions"
+                  id={fid("instructions")}
                   name="instructions"
                   rows={3}
                   defaultValue={v.instructions}
                   maxLength={5000}
                 />
               </Field>
-              <Field id="scheduled_date" label="Scheduled date" error={err.scheduled_date}>
-                <Input id="scheduled_date" name="scheduled_date" type="date" defaultValue={v.scheduled_date} />
+              <Field id={fid("scheduled_date")} label="Scheduled date" error={err.scheduled_date}>
+                <Input id={fid("scheduled_date")} name="scheduled_date" type="date" defaultValue={v.scheduled_date} />
               </Field>
-              <Field id="scheduled_time" label="Scheduled time" error={err.scheduled_time}>
-                <Input id="scheduled_time" name="scheduled_time" type="time" defaultValue={v.scheduled_time} />
+              <Field id={fid("scheduled_time")} label="Scheduled time" error={err.scheduled_time}>
+                <Input id={fid("scheduled_time")} name="scheduled_time" type="time" defaultValue={v.scheduled_time} />
               </Field>
-              <Field id="technician" label="Assigned technician" error={err.technician} wide>
-                <Input id="technician" name="technician" defaultValue={v.technician} maxLength={200} />
+              <Field id={fid("technician")} label="Assigned technician" error={err.technician} wide>
+                <Input id={fid("technician")} name="technician" defaultValue={v.technician} maxLength={200} />
               </Field>
             </Grid>
           </Section>
@@ -219,7 +222,7 @@ export function JobForm({ mode, action, initial, portals, job, cancelHref }: Pro
             title="Destination portals"
             description="Only the portals you tick receive this job, each as its own submission task. Leave all unticked to route it later."
           >
-            <fieldset aria-describedby={err.destinations ? "destinations-error" : undefined}>
+            <fieldset aria-describedby={err.destinations ? fid("destinations-error") : undefined}>
               <legend className="sr-only">Destination portals</legend>
               <ul className="flex flex-col gap-2">
                 {portals.map((p) => {
@@ -257,7 +260,7 @@ export function JobForm({ mode, action, initial, portals, job, cancelHref }: Pro
                 })}
               </ul>
               {err.destinations ? (
-                <p id="destinations-error" className="text-destructive mt-2 text-xs">
+                <p id={fid("destinations-error")} className="text-destructive mt-2 text-xs">
                   {err.destinations}
                 </p>
               ) : null}
@@ -286,17 +289,17 @@ export function JobForm({ mode, action, initial, portals, job, cancelHref }: Pro
               </ul>
             ) : null}
             <Input
-              id="attachments"
+              id={fid("attachments")}
               name="attachments"
               type="file"
               multiple
               accept={ATTACHMENT_ACCEPT}
               aria-invalid={err.attachments ? true : undefined}
-              aria-describedby={err.attachments ? "attachments-error" : undefined}
+              aria-describedby={err.attachments ? fid("attachments-error") : undefined}
               className="h-auto py-1.5 file:mr-3 file:rounded file:border-0 file:bg-secondary file:px-2 file:py-1 file:text-xs"
             />
             {err.attachments ? (
-              <p id="attachments-error" className="text-destructive mt-1.5 text-xs">
+              <p id={fid("attachments-error")} className="text-destructive mt-1.5 text-xs">
                 {err.attachments}
               </p>
             ) : null}

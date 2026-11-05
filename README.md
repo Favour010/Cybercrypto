@@ -2,7 +2,7 @@
 
 JobSync receives maintenance work orders from an external job-management system (originally AroFlo), validates and stores them, routes each job to one or more of five client portals that have **no API**, and drives a Playwright browser worker to submit the work order into each portal. It tracks every confirmation, retry, failure and human intervention.
 
-> **Status: Phases 1–3 of 8 implemented** (Phase 3 awaiting review). Foundation and overview dashboard; the Supabase schema, authentication and role-based access; the Jobs module with manual creation and editing; and the secure external intake API (`POST /api/v1/jobs/intake`) with the Incoming Jobs page. Database logic is tested against real PostgreSQL; **no live Supabase project has been connected yet**. See [docs/database.md](docs/database.md), [docs/intake-api.md](docs/intake-api.md) and [Build phases](#build-phases).
+> **Status: all 12 modules are built and working on the demo data layer** (the default `JOBSYNC_DATA_MODE=demo`): realistic sample data stored in each visitor's browser, with **simulated** portal runs that are always labelled as dry runs. The Supabase implementation (Phases 1–3: schema, sign-in, Jobs, Create/Edit, intake API, Incoming Jobs) is in place but has **not been tested against a live Supabase project**. The real Playwright worker has not been built; the repository contains no Playwright automation scripts. See [docs/demo-mode.md](docs/demo-mode.md), [docs/database.md](docs/database.md) and [docs/intake-api.md](docs/intake-api.md).
 
 ```
 External source ──► Secure intake API ──► Supabase ──► Validation & routing ──► Automation queue
@@ -92,12 +92,13 @@ npm run dev                  # http://localhost:3000
 | `npm run build` / `npm start` | Production build / server |
 | `npm test` | Unit tests; database tests too when `JOBSYNC_TEST_DATABASE_URL` is set |
 | `npm run test:db` | Database integration tests against real PostgreSQL |
+| `npm run test:e2e` | Browser tests of all 12 modules (set `E2E_BASE_URL`; needs Playwright) |
 | `npm run typecheck` | Generate route types, then `tsc --noEmit` |
 | `npm run lint` | ESLint |
 
 Useful URLs: `/` (overview), `/?preview=sample` (labelled sample preview), `/jobs`, `/jobs/new`, `/incoming`, `/login`, `/setup`, `/api/health` (configuration probe), `POST /api/v1/jobs/intake`.
 
-Without Supabase credentials every page redirects to `/setup`. For UI work without a project, run `JOBSYNC_DEV_AUTH_BYPASS=true npm run dev`: sign-in is skipped in local development only.
+In the default demo mode every page works without credentials. In Supabase mode, without credentials every page redirects to `/setup`. For UI work without a project, run `JOBSYNC_DEV_AUTH_BYPASS=true npm run dev`: sign-in is skipped in local development only.
 
 ### Environment variables
 
@@ -110,6 +111,8 @@ See [`.env.example`](.env.example). Missing values produce explicit *not configu
 | `JOBSYNC_EXECUTION_MODE` | `dry_run` (default) or `live` |
 | `JOBSYNC_ALLOW_LIVE_SUBMISSIONS` | Must be `true` before any LIVE submission is permitted |
 | `JOBSYNC_MAX_CONCURRENCY` | Browser workers (default 3, max 10) |
+| `JOBSYNC_DATA_MODE` | `demo` (default) or `supabase` |
+| `JOBSYNC_PORTAL_TEST_HOSTS` | Hosts the portal connection test may contact |
 | `JOBSYNC_DEV_AUTH_BYPASS` | `true` skips sign-in in `next dev` only, when Supabase is not configured |
 | `JOBSYNC_TEST_DATABASE_URL` | PostgreSQL superuser URL for `npm run test:db` |
 
@@ -136,7 +139,8 @@ Charts cover the last 14 UTC days: job intake by source, outcomes by portal, wor
 | --- | --- | --- |
 | 1 | Foundation, design system, navigation, overview dashboard | ✅ Complete |
 | 2 | Supabase schema & versioned migrations, RLS, authentication & roles, Jobs module | ✅ Complete |
-| 3 | Manual Create Job form and job editing, `POST /api/v1/jobs/intake` (auth, validation, idempotency, rate limit), Incoming Jobs, attachments | ✅ Implemented, awaiting review |
+| 3 | Manual Create Job form and job editing, `POST /api/v1/jobs/intake` (auth, validation, idempotency, rate limit), Incoming Jobs, attachments | ✅ Implemented |
+| — | **Demo data layer: all 12 modules functional** (routing, portals, queue, executions, failed jobs, analytics, integrations, audit, configuration) with simulated portal runs | ✅ Implemented |
 | 4 | Routing engine (rules + reasons + human-review fallback), Portal Management (5 portals) | Planned |
 | 5 | Automation queue (per-portal tasks, concurrency 3, backoff, locks, idempotency keys), Playwright worker & adapters | Planned |
 | 6 | n8n intake & results webhooks (shared-secret/HMAC), result processing, Integration Settings with real tests | Planned |

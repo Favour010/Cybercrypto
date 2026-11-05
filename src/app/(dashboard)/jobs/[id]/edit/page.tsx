@@ -15,6 +15,9 @@ import { missingAuthConfig } from "@/lib/auth/config";
 import { can } from "@/lib/auth/permissions";
 import { requireUser } from "@/lib/auth/session";
 import { getEditableJob, getFormPortals } from "@/lib/data/job-form";
+import { DemoReady } from "@/components/demo/demo-provider";
+import { DemoEditJob } from "@/components/demo/pages/demo-jobs";
+import { isDemoMode } from "@/lib/data-mode";
 
 export const metadata: Metadata = { title: "Edit job" };
 
@@ -22,7 +25,7 @@ export default function EditJobPage(props: PageProps<"/jobs/[id]/edit">) {
   return (
     <div className="flex flex-col gap-6">
       <Suspense fallback={<Skeleton className="h-[640px] rounded-xl" />}>
-        <EditJobContent params={props.params} />
+        {isDemoMode() ? <DemoEditRoute params={props.params} /> : <EditJobContent params={props.params} />}
       </Suspense>
     </div>
   );
@@ -77,5 +80,14 @@ async function EditJobContent({ params }: { params: PageProps<"/jobs/[id]/edit">
         />
       )}
     </>
+  );
+}
+
+async function DemoEditRoute({ params }: { params: PageProps<"/jobs/[id]/edit">["params"] }) {
+  const { id } = await params;
+  return (
+    <DemoReady>
+      <DemoEditJob jobId={id} />
+    </DemoReady>
   );
 }
