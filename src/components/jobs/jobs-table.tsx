@@ -91,7 +91,7 @@ export function JobsTable({ list, query }: { list: JobList; query: JobsQuery }) 
               </TableCell>
               <TableCell>
                 <div className="flex flex-col items-start gap-1">
-                  <JobStatusBadge status={job.status} />
+                  <JobStatusBadge status={job.status} dryRun={job.dry_run} />
                   {job.archived_at ? <span className="text-muted-foreground text-[11px]">Archived</span> : null}
                 </div>
               </TableCell>

@@ -38,6 +38,8 @@ export interface JobListRow {
   received_at: string;
   archived_at: string | null;
   assignments: { portal: PortalRef | null }[];
+  /** True when some portal outcome is a dry-run rehearsal rather than a real submission. */
+  dry_run?: boolean;
 }
 
 export interface JobList {

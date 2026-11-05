@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDown, FlaskConical } from "lucide-react";
+import { ChevronDown, FlaskConical, Users } from "lucide-react";
+import Link from "next/link";
 
 import { useDemoOptional } from "@/components/demo/demo-provider";
 import { ROLE_META } from "@/lib/auth/permissions";
@@ -37,27 +38,36 @@ export function DemoUserMenu() {
           <legend className="text-muted-foreground px-3 py-1 text-[11px] font-medium tracking-wide uppercase">
             Act as
           </legend>
-          {state.users.map((u) => (
-            <label
-              key={u.id}
-              className="hover:bg-accent flex cursor-pointer items-start gap-2 rounded-md px-3 py-2 text-sm"
-            >
-              <input
-                type="radio"
-                name="demo-user"
-                className="accent-primary mt-1"
-                checked={u.id === user.id}
-                onChange={() =>
-                  run((s) => switchUser(s, u.id), `Now acting as ${u.full_name} (${ROLE_META[u.role].label}).`)
-                }
-              />
-              <span>
-                <span className="block font-medium">{u.full_name}</span>
-                <span className="text-muted-foreground block text-xs">{ROLE_META[u.role].description}</span>
-              </span>
-            </label>
-          ))}
+          {state.users
+            .filter((u) => u.is_active)
+            .map((u) => (
+              <label
+                key={u.id}
+                className="hover:bg-accent flex cursor-pointer items-start gap-2 rounded-md px-3 py-2 text-sm"
+              >
+                <input
+                  type="radio"
+                  name="demo-user"
+                  className="accent-primary mt-1"
+                  checked={u.id === user.id}
+                  onChange={() =>
+                    run((s) => switchUser(s, u.id), `Now acting as ${u.full_name} (${ROLE_META[u.role].label}).`)
+                  }
+                />
+                <span>
+                  <span className="block font-medium">{u.full_name}</span>
+                  <span className="text-muted-foreground block text-xs">{ROLE_META[u.role].description}</span>
+                </span>
+              </label>
+            ))}
         </fieldset>
+        <div className="bg-border my-1 h-px" />
+        <Link
+          href="/settings/system/users"
+          className="hover:bg-accent flex items-center gap-2 rounded-md px-3 py-2 text-sm"
+        >
+          <Users className="text-muted-foreground size-4" aria-hidden /> Users &amp; roles
+        </Link>
       </div>
     </details>
   );

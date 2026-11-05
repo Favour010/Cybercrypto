@@ -179,7 +179,12 @@ export function DemoJobDetail({ jobId }: { jobId: string }) {
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">{job.reference}</h1>
           <p className="text-muted-foreground mt-1 text-sm">{job.customer_name}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <JobStatusBadge status={job.status} />
+            <JobStatusBadge
+              status={job.status}
+              dryRun={state.tasks.some(
+                (t) => t.job_id === job.id && t.status === "submitted" && t.execution_mode === "dry_run",
+              )}
+            />
             <PriorityBadge priority={job.priority} />
             <SourceBadge sourceType={job.source_type} source={job.source} />
           </div>

@@ -66,21 +66,28 @@ export function JobIntakeChart({ data }: { data: OverviewSnapshot["intakeSeries"
   );
 }
 
-export function PortalOutcomeChart({ data }: { data: OverviewSnapshot["portalOutcomes"] }) {
+/** `submittedLabel` lets the demo say "dry run passed" instead of claiming real submissions. */
+export function PortalOutcomeChart({
+  data,
+  submittedLabel = "Submitted",
+}: {
+  data: OverviewSnapshot["portalOutcomes"];
+  submittedLabel?: string;
+}) {
   const hasData = sum(data.map((d) => d.submitted + d.failed + d.humanReview)) > 0;
   return (
     <ChartFrame
       title="Submission outcomes by portal"
       description="Finished portal tasks in the window"
       legend={[
-        { label: "Submitted", color: STATUS_COLOR.good },
+        { label: submittedLabel, color: STATUS_COLOR.good },
         { label: "Human review", color: STATUS_COLOR.warning },
         { label: "Failed", color: STATUS_COLOR.critical },
       ]}
       table={{
         columns: [
           { key: "name", label: "Portal" },
-          { key: "submitted", label: "Submitted", numeric: true },
+          { key: "submitted", label: submittedLabel, numeric: true },
           { key: "humanReview", label: "Human review", numeric: true },
           { key: "failed", label: "Failed", numeric: true },
         ],
@@ -95,7 +102,7 @@ export function PortalOutcomeChart({ data }: { data: OverviewSnapshot["portalOut
           <YAxis type="category" dataKey="name" {...axisProps} width={84} />
           <Tooltip cursor={cursor} content={<ChartTooltip showTotal />} />
           {/* Order good → warning → critical keeps red away from green (CVD-safe). */}
-          <Bar dataKey="submitted" name="Submitted" stackId="o" fill={STATUS_COLOR.good} {...barGap} />
+          <Bar dataKey="submitted" name={submittedLabel} stackId="o" fill={STATUS_COLOR.good} {...barGap} />
           <Bar dataKey="humanReview" name="Human review" stackId="o" fill={STATUS_COLOR.warning} {...barGap} />
           <Bar
             dataKey="failed"
@@ -145,7 +152,13 @@ export function PortalWorkloadChart({ data }: { data: OverviewSnapshot["portalWo
   );
 }
 
-export function ProcessingTrendChart({ data }: { data: OverviewSnapshot["processingTrend"] }) {
+export function ProcessingTrendChart({
+  data,
+  submittedLabel = "Submitted",
+}: {
+  data: OverviewSnapshot["processingTrend"];
+  submittedLabel?: string;
+}) {
   const hasData = sum(data.map((d) => d.submitted + d.partial + d.failed + d.review)) > 0;
   const lineProps = {
     type: "monotone",
@@ -158,7 +171,7 @@ export function ProcessingTrendChart({ data }: { data: OverviewSnapshot["process
       title="Job processing trend"
       description="Final job outcome, by day received"
       legend={[
-        { label: "Submitted", color: STATUS_COLOR.good },
+        { label: submittedLabel, color: STATUS_COLOR.good },
         { label: "Human review", color: STATUS_COLOR.warning },
         { label: "Failed", color: STATUS_COLOR.critical },
         { label: "Partially submitted", color: STATUS_COLOR.serious },
@@ -166,7 +179,7 @@ export function ProcessingTrendChart({ data }: { data: OverviewSnapshot["process
       table={{
         columns: [
           { key: "label", label: "Day" },
-          { key: "submitted", label: "Submitted", numeric: true },
+          { key: "submitted", label: submittedLabel, numeric: true },
           { key: "review", label: "Human review", numeric: true },
           { key: "failed", label: "Failed", numeric: true },
           { key: "partial", label: "Partial", numeric: true },
@@ -181,7 +194,7 @@ export function ProcessingTrendChart({ data }: { data: OverviewSnapshot["process
           <XAxis dataKey="label" {...axisProps} interval="preserveStartEnd" minTickGap={16} />
           <YAxis {...axisProps} allowDecimals={false} width={44} />
           <Tooltip cursor={{ stroke: CHART_CHROME.axis, strokeDasharray: "3 3" }} content={<ChartTooltip />} />
-          <Line dataKey="submitted" name="Submitted" stroke={STATUS_COLOR.good} {...lineProps} />
+          <Line dataKey="submitted" name={submittedLabel} stroke={STATUS_COLOR.good} {...lineProps} />
           <Line dataKey="review" name="Human review" stroke={STATUS_COLOR.warning} {...lineProps} />
           <Line dataKey="failed" name="Failed" stroke={STATUS_COLOR.critical} {...lineProps} />
           <Line dataKey="partial" name="Partially submitted" stroke={STATUS_COLOR.serious} {...lineProps} />

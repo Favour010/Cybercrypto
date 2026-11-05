@@ -31,7 +31,7 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
 import { Input, NativeSelect } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { can } from "@/lib/auth/permissions";
-import { retryTask } from "@/lib/demo/engine";
+import { buildTaskPayload, retryTask } from "@/lib/demo/engine";
 import {
   attentionItems,
   blockedReason,
@@ -672,7 +672,35 @@ export function DemoExecutionDetail({ id }: { id: string }) {
           </ul>
         </CardContent>
       </Card>
+
+      <TaskPayloadCard execution={e} />
     </div>
+  );
+}
+
+/** The message a real worker would receive for this attempt (no secrets: credentials stay with the worker). */
+function TaskPayloadCard({ execution }: { execution: DemoExecution }) {
+  const { state } = useDemo();
+  const payload = useMemo(() => buildTaskPayload(state, execution), [state, execution]);
+  if (!payload) return null;
+  return (
+    <Card className="gap-3">
+      <CardHeader>
+        <CardTitle>Task payload</CardTitle>
+        <CardDescription>
+          What JobSync hands to the automation worker for this attempt. Portal credentials are never part of it: the
+          worker reads them from its own secret store. Files are passed as references, not contents.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <details>
+          <summary className="text-primary cursor-pointer text-sm">Show JSON</summary>
+          <pre className="bg-muted/50 mt-2 max-h-96 overflow-auto rounded-md border p-3 font-mono text-[11px] leading-relaxed">
+            {JSON.stringify(payload, null, 2)}
+          </pre>
+        </details>
+      </CardContent>
+    </Card>
   );
 }
 

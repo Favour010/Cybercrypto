@@ -14,13 +14,16 @@ import type {
   TaskStatus,
 } from "@/lib/domain/status";
 
-export const DEMO_STATE_VERSION = 1;
+export const DEMO_STATE_VERSION = 2;
 
 export interface DemoUser {
   id: string;
   email: string;
   full_name: string;
   role: AppRole;
+  /** Inactive users keep their history but cannot act or be switched to. */
+  is_active: boolean;
+  created_at: string;
 }
 
 export interface DemoPortal {
@@ -188,7 +191,7 @@ export type DemoEventStatus = "accepted" | "duplicate" | "rejected" | "failed" |
 
 export interface DemoIntegrationEvent {
   id: string;
-  integration: "intake" | "n8n";
+  integration: "intake" | "n8n" | "worker";
   direction: "inbound" | "outbound";
   event_type: string;
   status: DemoEventStatus;

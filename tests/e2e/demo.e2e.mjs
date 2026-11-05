@@ -67,6 +67,7 @@ await scenario("every navigation item and sub-route renders real content", async
     "/incoming?view=rejected",
     "/failed?tab=failed",
     "/analytics?days=21",
+    "/settings/system/users",
   ]) {
     await open(page, r);
     const text = await main(page);
@@ -202,6 +203,117 @@ await scenario("admin: settings validation, audit diff, secrets never stored, ro
   expect((await main(page)).includes("You do not have permission"), "viewer could read the audit log");
 });
 
+await scenario("full workflow: create → rule routing → queue → simulated dry run → reporting", async (page) => {
+  // Deterministic, fast simulation: no failures, no human review.
+  await open(page, "/settings/system");
+  await page.fill("#sys-failurePct", "0");
+  await page.fill("#sys-reviewPct", "0");
+  await page.selectOption("#sys-speed", "0.03");
+  await page.click('button:has-text("Save configuration")');
+  await page.waitForSelector("text=System configuration saved.");
+
+  // A manual job with NO destinations: the routing rules must choose the portal.
+  await open(page, "/jobs/new");
+  await page.waitForFunction(() => document.querySelector("input[name=submission_token]")?.value.length === 36);
+  await page.fill("[name=customer_name]:visible", "E2E Workflow Ltd");
+  await page.fill("[name=service_address]:visible", "2 Workflow Way, Leeds");
+  await page.fill("[name=category]:visible", "Fire Safety");
+  await page.selectOption("[name=priority]:visible", "urgent");
+  await page.fill("[name=description]:visible", "Annual fire alarm inspection.");
+  await page.click('button:has-text("Create job")');
+  await page.waitForURL(/notice=created/);
+  const jobUrl = new URL(page.url()).pathname;
+  await page.waitForFunction(() => /JS-\d{6}/.test(document.querySelector("main h1")?.textContent || ""));
+  const reference = (await page.locator("main h1:visible").innerText()).trim();
+  let detail = await main(page);
+  expect(detail.includes("Greenfield"), "routing rule did not assign Greenfield");
+  expect(!/Northstar|BluePeak|MetroCare/.test(detail.split("Activity")[0]), "job was sent to unrelated portals");
+
+  // Queue → simulated worker → dry run.
+  await open(page, "/queue");
+  await page.click('button:has-text("Start worker")');
+  await page.waitForSelector('button:has-text("Pause worker")');
+  await page.waitForTimeout(800); // let the save land before the full reload below
+  await open(page, jobUrl);
+  await page.waitForFunction(() => document.querySelector("main")?.innerText.includes("Dry run passed"), null, {
+    timeout: 120_000,
+  });
+  detail = await main(page);
+  expect(
+    !/\bSubmitted\b(?! manually)/.test(detail.split("\n").slice(0, 12).join(" ")),
+    "dry run labelled as Submitted",
+  );
+
+  // Reporting reflects it (after the debounced save).
+  await page.waitForTimeout(800);
+  await open(page, `/jobs?q=${encodeURIComponent(reference)}`);
+  await page.waitForSelector(`main table tbody tr:has-text("${reference}")`);
+  expect(
+    (await page.locator(`main table tbody tr:has-text("${reference}")`).innerText()).includes("Dry run passed"),
+    "jobs list does not label the dry run",
+  );
+  await open(page, "/executions?days=1&portal=greenfield");
+  await page.waitForSelector(`main table tbody tr:has-text("${reference}")`);
+  await open(page, "/");
+  expect((await main(page)).includes("Dry-run passed or submitted"), "overview charts claim real submissions");
+  await open(page, "/analytics?days=7");
+  expect((await main(page)).length > 500, "analytics did not render");
+});
+
+await scenario("users & roles: add, deactivate, guard rails, switch user", async (page) => {
+  await open(page, "/settings/system/users");
+  await page.click('button:has-text("Add user")');
+  await page.fill("[role=dialog] input:not([type=email]) >> nth=0", "Erin Engineer");
+  await page.fill("[role=dialog] input[type=email]", "erin@example.com");
+  await page.selectOption("[role=dialog] select", "operator");
+  await page.click("[role=dialog] button[type=submit]");
+  await page.waitForSelector("text=Erin Engineer added.");
+  // Duplicate email is refused.
+  await page.click('button:has-text("Add user")');
+  await page.fill("[role=dialog] input:not([type=email]) >> nth=0", "Erin Again");
+  await page.fill("[role=dialog] input[type=email]", "ERIN@example.com");
+  await page.click("[role=dialog] button[type=submit]");
+  await page.waitForSelector("text=Another user already has this email address.");
+  await page.keyboard.press("Escape");
+  // Own account cannot be deactivated.
+  const ownRow = page.locator("tr", { hasText: "(you)" });
+  expect(await ownRow.locator('button:has-text("Deactivate")').isDisabled(), "admin could deactivate themselves");
+  // Deactivate the viewer.
+  await page.locator("tr", { hasText: "Vera Viewer" }).locator('button:has-text("Deactivate")').click();
+  await page.click('[role=dialog] button:has-text("Deactivate")');
+  await page.waitForSelector("text=Vera Viewer deactivated.");
+  // The user menu offers active users only; switch to the new operator.
+  await page.click("header summary");
+  const menu = await page.locator("header details").innerText();
+  expect(!menu.includes("Vera Viewer") && menu.includes("Erin Engineer"), "user menu shows the wrong users");
+  await page.click("text=Erin Engineer");
+  await page.waitForTimeout(1200);
+  await open(page, "/settings/system/users");
+  expect((await page.locator('button:has-text("Add user")').count()) === 0, "operator can add users");
+  await open(page, "/audit");
+  expect((await main(page)).includes("You do not have permission"), "operator could read the audit log");
+});
+
+await scenario("worker results: rejected, applied, duplicate", async (page) => {
+  await open(page, "/settings/integrations");
+  await page.click('button:has-text("Start attempt")');
+  await page.waitForSelector("text=it waits for a result");
+  await page.click('button:has-text("Invalid: dry run claims a submission")');
+  await page.click('button:has-text("Post result")');
+  await page.waitForSelector("text=Rejected — nothing changed");
+  expect(
+    (await main(page)).includes("A dry-run execution can never report a real submission"),
+    "rejection reason missing",
+  );
+  await page.click('button:has-text("Dry run passed") >> nth=0');
+  await page.click('button:has-text("Post result")');
+  await page.waitForSelector("text=Applied");
+  await page.click('button:has-text("Post result")');
+  await page.waitForSelector("text=Duplicate — ignored");
+  const log = await main(page);
+  expect(/Recent posted results/.test(log), "result log missing");
+});
+
 await scenario("phone width: no page scrolls sideways", async (page) => {
   await page.setViewportSize({ width: 390, height: 844 });
   for (const r of [
@@ -218,6 +330,7 @@ await scenario("phone width: no page scrolls sideways", async (page) => {
     "/settings/integrations",
     "/audit",
     "/settings/system",
+    "/settings/system/users",
   ]) {
     await open(page, r);
     expect(

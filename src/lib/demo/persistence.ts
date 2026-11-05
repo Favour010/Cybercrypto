@@ -3,7 +3,8 @@
  * one record for the state and one store for uploaded attachment files.
  * Falls back to memory when IndexedDB is unavailable (e.g. private windows).
  */
-import { DEMO_STATE_VERSION, type DemoState } from "./types";
+import { migrateState } from "./migrate";
+import type { DemoState } from "./types";
 
 const DB_NAME = "jobsync-demo";
 const STATE_STORE = "state";
@@ -59,8 +60,8 @@ export async function probePersistence(): Promise<PersistenceKind> {
 
 export async function loadState(): Promise<DemoState | null> {
   try {
-    const s = (await tx<DemoState>(STATE_STORE, "readonly", (st) => st.get(STATE_KEY))) ?? null;
-    return s && s.version === DEMO_STATE_VERSION ? s : null;
+    const s = (await tx<unknown>(STATE_STORE, "readonly", (st) => st.get(STATE_KEY))) ?? null;
+    return migrateState(s);
   } catch {
     return null;
   }

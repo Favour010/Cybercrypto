@@ -10,9 +10,19 @@ import {
   type JobStatus,
 } from "@/lib/domain/status";
 
-export function JobStatusBadge({ status }: { status: JobStatus }) {
+/**
+ * `dryRun`: the job's portal outcomes are rehearsals (DRY_RUN), so "Submitted"
+ * would be untrue: nothing was sent to a portal.
+ */
+export function JobStatusBadge({ status, dryRun }: { status: JobStatus; dryRun?: boolean }) {
   const m = JOB_STATUS_META[status];
-  return <StatusBadge tone={m.tone} label={m.label} />;
+  const label =
+    dryRun && status === "submitted"
+      ? "Dry run passed"
+      : dryRun && status === "partially_submitted"
+        ? "Partially passed (dry run)"
+        : m.label;
+  return <StatusBadge tone={m.tone} label={label} />;
 }
 
 export function PriorityBadge({ priority }: { priority: JobPriority }) {

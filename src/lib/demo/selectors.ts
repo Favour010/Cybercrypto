@@ -52,7 +52,18 @@ export function searchText(j: DemoJob): string {
 
 /* ------------------------------------------------------------------ jobs */
 
-function toListRow(j: DemoJob, assignmentsByJob: Map<string, { portal_slug: PortalSlug }[]>): JobListRow {
+/** Jobs with at least one portal task passed as a dry run (rehearsal, not a real submission). */
+export function dryRunJobIds(s: DemoState): Set<string> {
+  return new Set(
+    s.tasks.filter((t) => t.status === "submitted" && t.execution_mode === "dry_run").map((t) => t.job_id),
+  );
+}
+
+function toListRow(
+  j: DemoJob,
+  assignmentsByJob: Map<string, { portal_slug: PortalSlug }[]>,
+  dryRun: Set<string>,
+): JobListRow {
   return {
     id: j.id,
     reference: j.reference,
@@ -71,11 +82,13 @@ function toListRow(j: DemoJob, assignmentsByJob: Map<string, { portal_slug: Port
     assignments: (assignmentsByJob.get(j.id) ?? []).map((a) => ({
       portal: { slug: a.portal_slug, name: portalName(a.portal_slug) },
     })),
+    dry_run: dryRun.has(j.id),
   };
 }
 
 export function listJobs(s: DemoState, q: JobsQuery): JobList {
   const assignmentsByJob = indexBy(s.assignments, (a) => a.job_id);
+  const dryRun = dryRunJobIds(s);
   const term = q.q.toLowerCase();
   let rows = s.jobs.filter((j) => {
     if (q.archived === "active" && j.archived_at) return false;
@@ -115,7 +128,7 @@ export function listJobs(s: DemoState, q: JobsQuery): JobList {
   const pageCount = Math.max(1, Math.ceil(total / q.size));
   const from = (q.page - 1) * q.size;
   return {
-    rows: rows.slice(from, from + q.size).map((j) => toListRow(j, assignmentsByJob)),
+    rows: rows.slice(from, from + q.size).map((j) => toListRow(j, assignmentsByJob, dryRun)),
     total,
     page: q.page,
     pageSize: q.size,
@@ -126,6 +139,15 @@ export function listJobs(s: DemoState, q: JobsQuery): JobList {
 
 /** Steps for an execution; seed history stores none, so derive them. */
 export function executionSteps(s: DemoState, e: DemoExecution, now: Date = new Date()): ExecutionStep[] {
+  if (e.status === "running" && !e.plan) {
+    // Waiting for a result posted from outside (result simulator): no progress to show.
+    return e.steps.map((step, i) => ({
+      ...step,
+      status: "pending",
+      at: null,
+      detail: i === 0 ? "Waiting for the worker to report a result" : undefined,
+    }));
+  }
   if (e.status === "running") {
     const plannedEnd = e.plan ? new Date(e.plan.ends_at).getTime() : now.getTime();
     const begin = new Date(e.started_at).getTime();
@@ -185,10 +207,11 @@ export function jobDetail(s: DemoState, id: string, includeAudit: boolean): JobD
   const j = s.jobs.find((x) => x.id === id);
   if (!j) return null;
   const assignmentsByJob = indexBy(s.assignments, (a) => a.job_id);
+  const dryRun = dryRunJobIds(s);
   const ruleName = new Map(s.routing_rules.map((r) => [r.id, r.name]));
   return {
     job: {
-      ...toListRow(j, assignmentsByJob),
+      ...toListRow(j, assignmentsByJob, dryRun),
       description: j.description,
       instructions: j.instructions,
       technician: j.technician,

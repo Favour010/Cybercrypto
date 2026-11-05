@@ -10,6 +10,13 @@ import {
   cancelTask,
   createManualJob,
   markSubmittedManually,
+  addUser,
+  setUserActive,
+  switchUser,
+  updateUser,
+  buildTaskPayload,
+  processAutomationResult,
+  startAttemptForExternalResult,
   retryTask,
   runRouting,
   saveRoutingRule,
@@ -24,6 +31,7 @@ import {
   type JobFieldsInput,
 } from "./engine";
 import { generateIntakeBatch, simulateIntake } from "./intake-sim";
+import { migrateState } from "./migrate";
 import { createRng } from "./rng";
 import { createSeedState, HISTORY_DAYS } from "./seed";
 import { analytics, attentionItems, incoming, listJobs, overview } from "./selectors";
@@ -616,5 +624,211 @@ describe("selectors", () => {
     expect(a.daily).toHaveLength(14);
     expect(a.portals.reduce((n, p) => n + p.tasks, 0)).toBe(a.totals.tasks);
     expect(a.totals.successRate).toBeGreaterThan(0.5);
+  });
+});
+
+describe("automation result processing", () => {
+  /** One running dry-run attempt on Apex, plus a valid result for it. */
+  const running = () => {
+    let s = setWorkerRunning(manual(emptyState(), ["apex"]).state, ctxFor(operator(emptyState())), true);
+    s = workerTick(s, NOW, succeed).state;
+    const exec = s.executions[0];
+    const result = {
+      execution_id: exec.id,
+      job_id: exec.job_id,
+      portal: exec.portal_slug,
+      execution_mode: "dry_run" as const,
+      status: "dry_run_passed" as const,
+      attempt: exec.attempt,
+      confirmation_reference: null,
+      started_at: exec.started_at,
+      completed_at: new Date(NOW.getTime() + 5_000).toISOString(),
+      screenshot_url: null,
+      error: null,
+      simulated: true,
+    };
+    return { s, exec, result };
+  };
+  const later = new Date(NOW.getTime() + 6_000);
+
+  it("builds the task payload the worker receives, with references to files only", () => {
+    const { s, exec } = running();
+    const p = buildTaskPayload(s, exec)!;
+    expect(p).toMatchObject({ execution_id: exec.id, execution_mode: "dry_run", attempt: 1 });
+    expect(p.portal.slug).toBe("apex");
+    expect(p.idempotency_key).toBe(s.tasks[0].idempotency_key);
+    expect(p.job.reference).toBe(s.jobs[0].reference);
+  });
+
+  it("applies a valid dry-run result and logs it as accepted", () => {
+    const { s, result } = running();
+    const r = processAutomationResult(s, result, later, "simulator");
+    expect(r.outcome).toMatchObject({ outcome: "applied", task_status: "submitted" });
+    expect(r.state.executions[0]).toMatchObject({ status: "succeeded", confirmation_reference: null });
+    expect(r.state.tasks[0]).toMatchObject({ status: "submitted", execution_mode: "dry_run" });
+    expect(r.state.events.find((e) => e.integration === "worker")).toMatchObject({ status: "accepted" });
+  });
+
+  it("treats a repeated result as a duplicate and does not apply it twice", () => {
+    const { s, result } = running();
+    const once = processAutomationResult(s, result, later, "simulator").state;
+    const twice = processAutomationResult(once, result, later, "simulator");
+    expect(twice.outcome.outcome).toBe("duplicate");
+    expect(twice.state.tasks[0].attempt_count).toBe(1);
+  });
+
+  it("rejects a dry run claiming a real submission", () => {
+    const { s, result } = running();
+    const r = processAutomationResult(
+      s,
+      { ...result, status: "submitted", confirmation_reference: "APX-123456" },
+      later,
+      "simulator",
+    );
+    expect(r.outcome.outcome).toBe("rejected");
+    expect(r.state.tasks[0].status).toBe("processing");
+    expect(r.state.events.at(-1)).toMatchObject({ status: "rejected" });
+  });
+
+  it("rejects results that do not match the execution", () => {
+    const { s, result } = running();
+    for (const bad of [
+      { ...result, portal: "northstar" },
+      { ...result, attempt: 2 },
+      { ...result, execution_id: crypto.randomUUID() },
+      { ...result, status: "failed" }, // failure without an error
+    ]) {
+      expect(processAutomationResult(s, bad, later, "simulator").outcome.outcome).toBe("rejected");
+    }
+  });
+
+  it("schedules a retry for a retryable failure and sends a non-retryable one to review", () => {
+    const { s, result } = running();
+    const retry = processAutomationResult(
+      s,
+      { ...result, status: "failed", error: { code: "PORTAL_TIMEOUT", message: "Timed out.", retryable: true } },
+      later,
+      "simulator",
+    );
+    expect(retry.outcome).toMatchObject({ outcome: "applied", task_status: "retry_scheduled" });
+    const review = processAutomationResult(
+      s,
+      { ...result, status: "needs_review", error: { code: "CAPTCHA_REQUIRED", message: "CAPTCHA.", retryable: false } },
+      later,
+      "simulator",
+    );
+    expect(review.outcome).toMatchObject({ outcome: "applied", task_status: "human_review" });
+    expect(review.state.jobs[0].status).toBe("requires_human_review");
+  });
+});
+
+describe("user management", () => {
+  const input = { email: "New.Person@Example.com", full_name: "New Person", role: "operator" as const };
+
+  it("lets admins add users, with unique emails", () => {
+    const s0 = emptyState();
+    const s = addUser(s0, ctxFor(admin(s0)), input);
+    const u = s.users.at(-1)!;
+    expect(u).toMatchObject({ email: "new.person@example.com", role: "operator", is_active: true });
+    expect(s.audit.at(-1)).toMatchObject({ action: "user.created", entity_id: u.id });
+    expect(() => addUser(s, ctxFor(admin(s)), input)).toThrow(/already has this email/);
+    expect(() => addUser(s0, ctxFor(operator(s0)), input)).toThrow(EngineError);
+    expect(() => addUser(s0, ctxFor(admin(s0)), { ...input, email: "nope" })).toThrow(/valid email/);
+  });
+
+  it("protects the last active admin and the admin's own account", () => {
+    const s = emptyState();
+    const me = admin(s);
+    expect(() =>
+      updateUser(s, ctxFor(me), me, { email: "ada.admin@jobsync.demo", full_name: "Ada", role: "viewer" }),
+    ).toThrow(/own admin role/);
+    expect(() => setUserActive(s, ctxFor(me), me, false)).toThrow(/your own account/);
+    // Promote the operator, then demote the original admin: allowed, one admin remains.
+    let t = updateUser(s, ctxFor(me), operator(s), {
+      email: "oscar.operator@jobsync.demo",
+      full_name: "Oscar Operator",
+      role: "admin",
+    });
+    t = updateUser(t, ctxFor(operator(s)), me, {
+      email: "ada.admin@jobsync.demo",
+      full_name: "Ada Admin",
+      role: "operator",
+    });
+    expect(t.users.filter((u) => u.role === "admin")).toHaveLength(1);
+    expect(t.audit.at(-1)).toMatchObject({ action: "user.role_changed" });
+  });
+
+  it("blocks deactivated users from acting or being switched to", () => {
+    const s0 = emptyState();
+    const s = setUserActive(s0, ctxFor(admin(s0)), operator(s0), false);
+    expect(() => switchUser(s, operator(s))).toThrow(/deactivated/);
+    expect(() => manual(s, ["apex"])).toThrow(/deactivated/);
+    const back = setUserActive(s, ctxFor(admin(s)), operator(s), true);
+    expect(manual(back, ["apex"]).state.jobs).toHaveLength(1);
+  });
+
+  it("upgrades saved version 1 state and rejects unknown versions", () => {
+    const s = emptyState();
+    const v1 = {
+      ...s,
+      version: 1,
+      users: s.users.map((u) => ({ id: u.id, email: u.email, full_name: u.full_name, role: u.role })),
+    };
+    const migrated = migrateState(v1)!;
+    expect(migrated.version).toBe(2);
+    expect(migrated.users.every((u) => u.is_active && u.created_at === s.seeded_at)).toBe(true);
+    expect(migrateState({ ...s, version: 99 })).toBeNull();
+    expect(migrateState(null)).toBeNull();
+  });
+});
+
+describe("sample data generator", () => {
+  it("is deterministic per seed and scales with the chosen size", () => {
+    const a = createSeedState(NOW, 7, { historyDays: 5, weekdayVolume: 20 });
+    const b = createSeedState(NOW, 7, { historyDays: 5, weekdayVolume: 20 });
+    expect(a.jobs.map((j) => j.reference)).toEqual(b.jobs.map((j) => j.reference));
+    expect(a.jobs.length).toBeLessThan(120);
+    const big = createSeedState(NOW, 7, { historyDays: 30, weekdayVolume: 150 });
+    expect(big.jobs.length).toBeGreaterThan(a.jobs.length * 10);
+    expect(big.executions.every((e) => e.simulated)).toBe(true);
+  });
+
+  it("clamps out-of-range options", () => {
+    const s = createSeedState(NOW, 7, { historyDays: 999, weekdayVolume: -5 });
+    const oldest = s.jobs.reduce((m, j) => (j.received_at < m ? j.received_at : m), NOW.toISOString());
+    expect(NOW.getTime() - Date.parse(oldest)).toBeLessThanOrEqual(60 * 86_400_000);
+  });
+});
+
+describe("external result attempts", () => {
+  it("waits for a posted result; the simulated worker never finishes it", () => {
+    let s = manual(emptyState(), ["apex"]).state;
+    const out = startAttemptForExternalResult(s, ctxFor(admin(s)), s.tasks[0].id);
+    s = setWorkerRunning(out.state, ctxFor(admin(s)), true);
+    s = tickUntilIdle(s);
+    expect(s.executions).toHaveLength(1);
+    expect(s.executions[0]).toMatchObject({ status: "running", plan: null });
+    expect(() => startAttemptForExternalResult(s, ctxFor(admin(s)), s.tasks[0].id)).toThrow(EngineError);
+    expect(() => startAttemptForExternalResult(out.state, ctxFor(operator(s)), s.tasks[0].id)).toThrow(/role/);
+
+    const e = s.executions[0];
+    const result = {
+      execution_id: e.id,
+      job_id: e.job_id,
+      portal: e.portal_slug,
+      execution_mode: "dry_run",
+      status: "dry_run_passed",
+      attempt: 1,
+      confirmation_reference: null,
+      started_at: e.started_at,
+      completed_at: e.started_at,
+      screenshot_url: null,
+      error: null,
+      simulated: false,
+    };
+    const unmarked = processAutomationResult(s, result, NOW, "simulator");
+    expect(unmarked.outcome).toMatchObject({ outcome: "rejected" });
+    const ok = processAutomationResult(s, { ...result, simulated: true }, NOW, "simulator");
+    expect(ok.outcome).toMatchObject({ outcome: "applied", task_status: "submitted", job_status: "submitted" });
   });
 });

@@ -55,19 +55,54 @@ function weightedPortal(rng: Rng): PortalSlug {
   return "northstar";
 }
 
-export function createSeedState(now: Date = new Date(), seed = DEFAULT_SEED): DemoState {
+export interface SeedOptions {
+  /** Days of history, including today (1–60). */
+  historyDays?: number;
+  /** Typical jobs received on a weekday (weekends get ~40%). 1–300. */
+  weekdayVolume?: number;
+}
+
+export const SEED_LIMITS = { historyDays: [1, 60], weekdayVolume: [1, 300] } as const;
+export const DEFAULT_WEEKDAY_VOLUME = 92;
+
+export function createSeedState(now: Date = new Date(), seed = DEFAULT_SEED, options: SeedOptions = {}): DemoState {
+  const clamp = (v: number | undefined, [lo, hi]: readonly [number, number], d: number) =>
+    Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v!))) : d;
+  const days = clamp(options.historyDays, SEED_LIMITS.historyDays, HISTORY_DAYS);
+  const volume = clamp(options.weekdayVolume, SEED_LIMITS.weekdayVolume, DEFAULT_WEEKDAY_VOLUME);
   const rng = createRng(seed);
   const id = () => rngId(rng);
   const at = (ms: number) => new Date(ms).toISOString();
   const nowMs = now.getTime();
-  const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - (HISTORY_DAYS - 1) * DAY;
+  const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - (days - 1) * DAY;
   const seededAt = at(start - 2 * DAY);
 
   const organisation = { id: id(), name: "Default organisation", slug: "default" };
   const users = [
-    { id: id(), email: "ada.admin@jobsync.demo", full_name: "Ada Admin", role: "admin" as const },
-    { id: id(), email: "oscar.operator@jobsync.demo", full_name: "Oscar Operator", role: "operator" as const },
-    { id: id(), email: "vera.viewer@jobsync.demo", full_name: "Vera Viewer", role: "viewer" as const },
+    {
+      id: id(),
+      email: "ada.admin@jobsync.demo",
+      full_name: "Ada Admin",
+      role: "admin" as const,
+      is_active: true,
+      created_at: seededAt,
+    },
+    {
+      id: id(),
+      email: "oscar.operator@jobsync.demo",
+      full_name: "Oscar Operator",
+      role: "operator" as const,
+      is_active: true,
+      created_at: seededAt,
+    },
+    {
+      id: id(),
+      email: "vera.viewer@jobsync.demo",
+      full_name: "Vera Viewer",
+      role: "viewer" as const,
+      is_active: true,
+      created_at: seededAt,
+    },
   ];
   const [admin, operator] = users;
 
@@ -194,11 +229,14 @@ export function createSeedState(now: Date = new Date(), seed = DEFAULT_SEED): De
   const failuresRetryable = SIMULATED_FAILURES.filter((f) => f.retryable);
   const failuresReview = SIMULATED_FAILURES.filter((f) => !f.retryable);
 
-  for (let day = 0; day < HISTORY_DAYS; day++) {
+  for (let day = 0; day < days; day++) {
     const dayStart = start + day * DAY;
-    const isToday = day === HISTORY_DAYS - 1;
+    const isToday = day === days - 1;
     const weekday = new Date(dayStart).getUTCDay();
-    const base = weekday === 0 || weekday === 6 ? between(rng, 30, 45) : between(rng, 80, 105);
+    const base =
+      weekday === 0 || weekday === 6
+        ? between(rng, Math.round(volume * 0.33), Math.round(volume * 0.49))
+        : between(rng, Math.round(volume * 0.87), Math.round(volume * 1.14));
     const fraction = isToday ? Math.max(0.05, (nowMs - dayStart) / DAY) : 1;
     const count = Math.max(isToday ? 6 : 1, Math.round(base * fraction));
 
@@ -354,7 +392,7 @@ export function createSeedState(now: Date = new Date(), seed = DEFAULT_SEED): De
         for (const d of routeJob(job, routing_rules))
           decided.push({ slug: d.portal_slug, source: "routing_rule", reason: d.reason, ruleId: d.rule_id });
         if (decided.length === 0) {
-          if (day < HISTORY_DAYS - 2) {
+          if (day < days - 2) {
             // Older unmatched jobs were resolved by an operator during human review.
             decided.push({
               slug: weightedPortal(rng),
@@ -472,7 +510,7 @@ export function createSeedState(now: Date = new Date(), seed = DEFAULT_SEED): De
         task.status = final;
         if (final !== "retry_scheduled") task.next_attempt_at = null;
         // Older reviews were often resolved by a person on the portal itself.
-        if (final === "human_review" && day < HISTORY_DAYS - 3 && rng() < 0.6) {
+        if (final === "human_review" && day < days - 3 && rng() < 0.6) {
           task.status = "submitted";
           task.execution_mode = "live";
           task.confirmation_reference = `${PORTAL_SPECS[d.slug].referencePattern.split("-")[0]}-${between(rng, 10000, 99999)}`;
@@ -502,7 +540,7 @@ export function createSeedState(now: Date = new Date(), seed = DEFAULT_SEED): De
         .sort()
         .at(-1);
       if (last) job.updated_at = last;
-      if (!isToday && day < HISTORY_DAYS - 7 && rng() < 0.02) {
+      if (!isToday && day < days - 7 && rng() < 0.02) {
         job.archived_at = at(receivedMs + 3 * DAY);
         job.archived_by = admin.id;
         log(job.archived_at, "jobs.archived", "jobs", job.id, admin.id, "user", null);

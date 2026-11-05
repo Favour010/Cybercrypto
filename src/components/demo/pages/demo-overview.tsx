@@ -48,11 +48,11 @@ export function DemoOverview() {
       <OverviewKpis snapshot={snapshot} />
       <div className="grid gap-4 xl:grid-cols-2">
         <JobIntakeChart data={snapshot.intakeSeries} />
-        <PortalOutcomeChart data={snapshot.portalOutcomes} />
+        <PortalOutcomeChart data={snapshot.portalOutcomes} submittedLabel="Dry-run passed or submitted" />
       </div>
       <div className="grid gap-4 xl:grid-cols-3">
         <PortalWorkloadChart data={snapshot.portalWorkload} />
-        <ProcessingTrendChart data={snapshot.processingTrend} />
+        <ProcessingTrendChart data={snapshot.processingTrend} submittedLabel="Dry-run passed or submitted" />
         <AutomationActivityChart data={snapshot.automationActivity} />
       </div>
       <p className="text-muted-foreground text-xs">

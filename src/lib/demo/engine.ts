@@ -6,12 +6,13 @@
  * one task per job and portal, submitted tasks are final, explicit routing
  * only. Portal executions are SIMULATED and always labelled so.
  */
-import { can, type Permission } from "@/lib/auth/permissions";
+import { can, isAppRole, type AppRole, type Permission } from "@/lib/auth/permissions";
 import { isPortalSlug, type PortalSlug } from "@/lib/domain/portals";
 import type { JobPriority, JobSourceType, JobStatus, TaskStatus } from "@/lib/domain/status";
 import { backoffSeconds, deriveJobStatus } from "@/lib/jobs/status";
 import { EXECUTION_STEPS, PORTAL_SPECS, SIMULATED_FAILURES } from "@/lib/portals/specs";
 import { NO_ROUTE_REASON, routeJob } from "@/lib/routing/rules";
+import { automationResultSchema, type AutomationResult, type AutomationTaskPayload } from "@/lib/automation/contract";
 import { uuidV4 } from "@/lib/uuid";
 
 import { between, pick, type Rng } from "./rng";
@@ -19,11 +20,13 @@ import type {
   DemoAssignment,
   DemoAttachment,
   DemoExecution,
+  DemoIntegrationEvent,
   DemoJob,
   DemoPortal,
   DemoRoutingRule,
   DemoState,
   DemoTask,
+  DemoUser,
   ExecutionStep,
   IntegrationSettings,
   SimulatedOutcome,
@@ -106,6 +109,9 @@ function assertCan(s: DemoState, ctx: Ctx, permission: Permission) {
   const user = s.users.find((u) => u.id === ctx.actorId);
   if (!user || !can(user.role, permission)) {
     throw new EngineError("forbidden", "Your role does not permit this action.");
+  }
+  if (!user.is_active) {
+    throw new EngineError("forbidden", "This user account is deactivated.");
   }
 }
 
@@ -914,51 +920,175 @@ export function finalSteps(
   });
 }
 
-function finishExecution(s: DemoState, exec: DemoExecution, now: Date) {
-  const ctx: Ctx = { now, actorId: null, actorType: "worker" };
-  const outcome = exec.plan!.outcome;
-  const end = new Date(Math.min(now.getTime(), new Date(exec.plan!.ends_at).getTime()));
+/* ------------------------------------------------- worker contract (results) */
+
+/** The structured task a worker receives for one attempt (see src/lib/automation/contract.ts). */
+export function buildTaskPayload(
+  s: DemoState,
+  exec: Pick<DemoExecution, "id" | "task_id" | "attempt" | "mode">,
+): AutomationTaskPayload | null {
   const task = s.tasks.find((t) => t.id === exec.task_id);
+  const job = task && s.jobs.find((j) => j.id === task.job_id);
+  const portal = task && s.portals.find((p) => p.slug === task.portal_slug);
+  if (!task || !job || !portal) return null;
+  const contact = s.contacts.find((c) => c.job_id === job.id && c.is_primary) ?? null;
+  return {
+    execution_id: exec.id,
+    task_id: task.id,
+    idempotency_key: task.idempotency_key,
+    execution_mode: exec.mode,
+    portal: { slug: portal.slug, base_url: portal.base_url, timeout_seconds: portal.timeout_seconds },
+    attempt: exec.attempt,
+    job: {
+      id: job.id,
+      reference: job.reference,
+      external_job_id: job.external_job_id,
+      source: job.source,
+      customer_name: job.customer_name,
+      service_address: job.service_address,
+      category: job.category,
+      priority: job.priority,
+      description: job.description,
+      instructions: job.instructions,
+      scheduled_date: job.scheduled_date,
+      scheduled_time: job.scheduled_time,
+      technician: job.technician,
+      contact: contact ? { name: contact.name, email: contact.email, phone: contact.phone } : null,
+    },
+    attachments: s.attachments
+      .filter((a) => a.job_id === job.id)
+      .map((a) => ({
+        id: a.id,
+        file_name: a.file_name,
+        content_type: a.content_type,
+        size_bytes: a.size_bytes,
+        location: a.blob_key ? ("browser_storage" as const) : ("url" as const),
+      })),
+  };
+}
+
+/** The result the simulated worker reports for a finished attempt (same contract a real worker uses). */
+export function simulatedResult(s: DemoState, exec: DemoExecution, end: Date): AutomationResult {
+  const outcome = exec.plan!.outcome;
   const portal = s.portals.find((p) => p.slug === exec.portal_slug);
   const hasAttachments = s.attachments.some((a) => a.job_id === exec.job_id);
-  const steps = finalSteps(
-    outcome,
-    hasAttachments,
-    PORTAL_SPECS[exec.portal_slug].supportsAttachments && Boolean(portal),
-    new Date(exec.started_at),
-    end,
-  );
+  return {
+    execution_id: exec.id,
+    job_id: exec.job_id,
+    portal: exec.portal_slug,
+    execution_mode: "dry_run",
+    status: outcome.kind === "success" ? "dry_run_passed" : outcome.kind === "human_review" ? "needs_review" : "failed",
+    attempt: exec.attempt,
+    confirmation_reference: null,
+    started_at: exec.started_at,
+    completed_at: end.toISOString(),
+    screenshot_url: null,
+    error:
+      outcome.kind === "success"
+        ? null
+        : { code: outcome.code, message: outcome.message, retryable: outcome.kind === "retryable" },
+    steps: finalSteps(
+      outcome,
+      hasAttachments,
+      PORTAL_SPECS[exec.portal_slug].supportsAttachments && Boolean(portal),
+      new Date(exec.started_at),
+      end,
+    ),
+    simulated: true,
+  };
+}
+
+export type ResultOutcome =
+  | { outcome: "applied"; task_status: TaskStatus; job_status: JobStatus }
+  | { outcome: "duplicate"; message: string }
+  | { outcome: "rejected"; reasons: string[] };
+
+const RESULT_TO_EXECUTION: Record<AutomationResult["status"], DemoExecution["status"]> = {
+  dry_run_passed: "succeeded",
+  submitted: "succeeded",
+  failed: "failed",
+  needs_review: "failed",
+};
+
+/** Validate a worker result against the schema AND the execution it claims to finish. */
+function checkResult(
+  s: DemoState,
+  input: unknown,
+): { ok: true; result: AutomationResult; exec: DemoExecution } | { ok: false; reasons: string[]; duplicate?: boolean } {
+  const parsed = automationResultSchema.safeParse(input);
+  if (!parsed.success)
+    return { ok: false, reasons: parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`) };
+  const r = parsed.data;
+  const exec = s.executions.find((e) => e.id === r.execution_id);
+  if (!exec) return { ok: false, reasons: [`execution_id: no execution ${r.execution_id} exists.`] };
+  const reasons: string[] = [];
+  if (exec.job_id !== r.job_id) reasons.push("job_id: does not match the execution.");
+  if (exec.portal_slug !== r.portal) reasons.push(`portal: the execution is for ${exec.portal_slug}, not ${r.portal}.`);
+  if (exec.attempt !== r.attempt) reasons.push(`attempt: the execution is attempt ${exec.attempt}, not ${r.attempt}.`);
+  if (exec.mode !== r.execution_mode)
+    reasons.push(`execution_mode: the execution ran as ${exec.mode}; a result cannot change that.`);
+  if (Date.parse(r.started_at) !== Date.parse(exec.started_at))
+    reasons.push("started_at: does not match the execution.");
+  if (exec.simulated && !r.simulated)
+    reasons.push("simulated: this execution ran in the demo; its result must be marked simulated.");
+  if (reasons.length) return { ok: false, reasons };
+  if (exec.status !== "running") {
+    const same = exec.status === RESULT_TO_EXECUTION[r.status] && (exec.error_code ?? null) === (r.error?.code ?? null);
+    return same
+      ? { ok: false, reasons: ["This result was already applied. Nothing changed."], duplicate: true }
+      : {
+          ok: false,
+          reasons: [`This execution already finished as ${exec.status}; a conflicting result is not applied.`],
+        };
+  }
+  const task = s.tasks.find((t) => t.id === exec.task_id);
+  if (task?.status === "submitted")
+    return { ok: false, reasons: ["The portal task is already submitted; JobSync never applies a second submission."] };
+  return { ok: true, result: r, exec };
+}
+
+/** Apply a validated result to its execution, task and job (mutates the draft). */
+function applyResult(
+  s: DemoState,
+  exec: DemoExecution,
+  r: AutomationResult,
+): { task_status: TaskStatus; job_status: JobStatus } {
+  const ctx: Ctx = { now: new Date(r.completed_at), actorId: null, actorType: "worker" };
+  const end = new Date(r.completed_at);
   replace(s.executions, exec.id, {
-    status: outcome.kind === "success" ? "succeeded" : "failed",
+    status: RESULT_TO_EXECUTION[r.status],
     completed_at: end.toISOString(),
     duration_ms: end.getTime() - new Date(exec.started_at).getTime(),
-    error_code: outcome.kind === "success" ? null : outcome.code,
-    error_message: outcome.kind === "success" ? null : outcome.message,
-    steps,
+    confirmation_reference: r.confirmation_reference,
+    screenshot_path: r.screenshot_url,
+    error_code: r.error?.code ?? null,
+    error_message: r.error?.message ?? null,
+    steps: r.steps ?? exec.steps,
     plan: null,
   });
-  if (!task) return;
+  const task = s.tasks.find((t) => t.id === exec.task_id);
+  if (!task) return { task_status: "failed", job_status: "failed" };
 
   let status: TaskStatus;
   let next: string | null = null;
-  let lastError: string | null = null;
-  if (outcome.kind === "success") {
-    status = "submitted"; // execution_mode stays dry_run: a rehearsal, never a real submission
-  } else if (outcome.kind === "human_review") {
+  let lastError: string | null = r.error ? `${r.error.code}: ${r.error.message}` : null;
+  if (r.status === "dry_run_passed" || r.status === "submitted") {
+    status = "submitted";
+  } else if (r.status === "needs_review" || (r.error && !r.error.retryable)) {
     status = "human_review";
-    lastError = `${outcome.code}: ${outcome.message}`;
   } else if (task.attempt_count < task.max_attempts) {
     status = "retry_scheduled";
     next = new Date(
       end.getTime() + backoffSeconds(task.attempt_count, s.settings.backoff_base_seconds) * 1000,
     ).toISOString();
-    lastError = `${outcome.code}: ${outcome.message}`;
   } else {
     status = "failed";
-    lastError = `${outcome.code}: ${outcome.message} (retry limit of ${task.max_attempts} reached)`;
+    lastError = `${lastError} (retry limit of ${task.max_attempts} reached)`;
   }
   replace(s.tasks, task.id, {
     status,
+    execution_mode: r.status === "submitted" ? "live" : task.execution_mode,
+    confirmation_reference: r.status === "submitted" ? r.confirmation_reference : task.confirmation_reference,
     next_attempt_at: next,
     locked_by: null,
     locked_at: null,
@@ -966,18 +1096,21 @@ function finishExecution(s: DemoState, exec: DemoExecution, now: Date) {
     last_error: lastError,
     updated_at: end.toISOString(),
   });
-  refreshJobStatus(s, { ...ctx, now: end }, task.job_id);
+  const jobStatus = refreshJobStatus(s, ctx, task.job_id);
 
   const n8n = s.integrations.n8n;
   const eventType =
     status === "submitted"
-      ? "task.dry_run_passed"
+      ? r.status === "submitted"
+        ? "task.submitted"
+        : "task.dry_run_passed"
       : status === "failed"
         ? "task.failed"
         : status === "human_review"
           ? "task.needs_review"
           : null;
   if (n8n.outbound_enabled && eventType && n8n.events.includes(eventType)) {
+    const job = s.jobs.find((j) => j.id === task.job_id);
     s.events.push({
       id: uuidV4(),
       integration: "n8n",
@@ -989,18 +1122,80 @@ function finishExecution(s: DemoState, exec: DemoExecution, now: Date) {
       idempotency_key: `${task.id}:${task.attempt_count}`,
       job_id: task.job_id,
       payload: {
-        task_id: task.id,
+        event: eventType,
+        occurred_at: end.toISOString(),
+        execution_id: exec.id,
         job_id: task.job_id,
+        job_reference: job?.reference ?? null,
+        external_job_id: job?.external_job_id ?? null,
         portal: task.portal_slug,
-        status,
+        task_status: status,
         attempt: task.attempt_count,
-        simulated: true,
+        execution_mode: r.execution_mode,
+        confirmation_reference: r.confirmation_reference,
+        error: r.error,
+        simulated: r.simulated,
       },
       error: "Demo mode records outbound events but does not deliver them.",
       origin: "engine",
       created_at: end.toISOString(),
     });
   }
+  return { task_status: status, job_status: jobStatus };
+}
+
+/**
+ * The result-processing entry point for any worker: validate, check against
+ * the execution, then apply. Idempotent: the same result twice is a no-op.
+ */
+export function processAutomationResult(state: DemoState, input: unknown, now: Date, origin: "worker" | "simulator") {
+  const check = checkResult(state, input);
+  const s = draft(state);
+  const log = (status: DemoIntegrationEvent["status"], error: string | null) => {
+    if (origin === "worker") return;
+    const r = input as Partial<AutomationResult> | null;
+    s.events.push({
+      id: uuidV4(),
+      integration: "worker",
+      direction: "inbound",
+      event_type: "automation.result",
+      status,
+      http_status: status === "accepted" ? 200 : status === "duplicate" ? 200 : 422,
+      request_id: uuidV4(),
+      idempotency_key: typeof r?.execution_id === "string" ? `${r.execution_id}:${r.attempt ?? "?"}` : null,
+      job_id: typeof r?.job_id === "string" && s.jobs.some((j) => j.id === r.job_id) ? r.job_id : null,
+      payload: input,
+      error,
+      origin: "simulator",
+      created_at: now.toISOString(),
+    });
+  };
+  if (!check.ok) {
+    log(check.duplicate ? "duplicate" : "rejected", check.reasons.join(" "));
+    const outcome: ResultOutcome = check.duplicate
+      ? { outcome: "duplicate", message: check.reasons[0] }
+      : { outcome: "rejected", reasons: check.reasons };
+    return { state: origin === "worker" ? state : s, outcome };
+  }
+  const applied = applyResult(
+    s,
+    s.executions.find((e) => e.id === check.exec.id)!,
+    check.result,
+  );
+  log("accepted", null);
+  return { state: s, outcome: { outcome: "applied", ...applied } as ResultOutcome };
+}
+
+/** The simulated worker finishing an attempt: it reports through the same processor. */
+function finishExecution(s: DemoState, exec: DemoExecution, now: Date) {
+  const end = new Date(Math.min(now.getTime(), new Date(exec.plan!.ends_at).getTime()));
+  const check = checkResult(s, simulatedResult(s, exec, end));
+  if (check.ok)
+    applyResult(
+      s,
+      s.executions.find((e) => e.id === exec.id)!,
+      check.result,
+    );
 }
 
 export interface TickSummary {
@@ -1092,6 +1287,61 @@ export function workerTick(state: DemoState, now: Date, rng: Rng): { state: Demo
   return { state: s, summary: { started, finished: due.length } };
 }
 
+/**
+ * Starts an attempt that waits for a result posted from outside (the result
+ * simulator on Integration Settings, later a real worker). It has no
+ * simulation plan, so the in-browser worker never finishes it by itself.
+ */
+export function startAttemptForExternalResult(state: DemoState, ctx: Ctx, taskId: string) {
+  assertCan(state, ctx, "integrations.manage");
+  const t = state.tasks.find((x) => x.id === taskId);
+  if (!t) throw new EngineError("not_found", "Task not found.");
+  if (t.status !== "pending" && t.status !== "retry_scheduled")
+    throw new EngineError("already_in_state", "Only pending or retry-scheduled tasks can start an attempt.");
+  const job = state.jobs.find((j) => j.id === t.job_id);
+  if (!job || job.archived_at) throw new EngineError("archived", "The job is archived.");
+  const portal = portalOrThrow(state, t.portal_slug);
+  if (!portal.is_enabled) throw new EngineError("portal_disabled", `${portal.name} is disabled.`);
+  if (state.executions.some((e) => e.status === "running" && e.portal_slug === t.portal_slug))
+    throw new EngineError("locked", `${portal.name} already has an attempt running (one at a time per portal).`);
+  const s = draft(state);
+  const now = iso(ctx.now);
+  const attempt = t.attempt_count + 1;
+  const exec: DemoExecution = {
+    id: uuidV4(),
+    task_id: t.id,
+    job_id: t.job_id,
+    portal_slug: t.portal_slug,
+    attempt,
+    mode: "dry_run",
+    status: "running",
+    worker_id: "result-simulator",
+    started_at: now,
+    completed_at: null,
+    duration_ms: null,
+    confirmation_reference: null,
+    screenshot_path: null,
+    error_code: null,
+    error_message: null,
+    steps: EXECUTION_STEPS.map((x) => ({ key: x.key, label: x.label, status: "pending" as const, at: null })),
+    simulated: true,
+    plan: null,
+  };
+  s.executions.push(exec);
+  replace(s.tasks, t.id, {
+    status: "processing",
+    attempt_count: attempt,
+    started_at: t.started_at ?? now,
+    locked_by: exec.worker_id,
+    locked_at: now,
+    next_attempt_at: null,
+    updated_at: now,
+  });
+  refreshJobStatus(s, ctx, t.job_id);
+  audit(s, ctx, "execution.started_for_external_result", "portal_task", t.id, { attempt, portal: t.portal_slug });
+  return { state: s, execution: exec };
+}
+
 /* ------------------------------------------------------- settings & users */
 
 export function updateSettings(state: DemoState, ctx: Ctx, input: Omit<SystemSettings, "execution_mode">) {
@@ -1160,6 +1410,86 @@ export function updateIntegrations(
 }
 
 export function switchUser(state: DemoState, userId: string) {
-  if (!state.users.some((u) => u.id === userId)) throw new EngineError("not_found", "Unknown demo user.");
+  const user = state.users.find((u) => u.id === userId);
+  if (!user) throw new EngineError("not_found", "Unknown demo user.");
+  if (!user.is_active)
+    throw new EngineError("forbidden", `${user.full_name} is deactivated. Reactivate the account first.`);
   return { ...state, current_user_id: userId };
+}
+
+/* ------------------------------------------------------------------ users */
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export interface UserInput {
+  email: string;
+  full_name: string;
+  role: AppRole;
+}
+
+function validateUser(s: DemoState, input: UserInput, selfId: string | null) {
+  const reasons: string[] = [];
+  const email = input.email.trim().toLowerCase();
+  const name = input.full_name.trim();
+  if (name.length < 2 || name.length > 120) reasons.push("Name must be 2–120 characters.");
+  if (!EMAIL_RE.test(email) || email.length > 254) reasons.push("Enter a valid email address.");
+  if (!isAppRole(input.role)) reasons.push("Choose a role.");
+  if (s.users.some((u) => u.id !== selfId && u.email.toLowerCase() === email))
+    reasons.push("Another user already has this email address.");
+  if (reasons.length) throw new EngineError("invalid", reasons.join(" "));
+  return { email, full_name: name, role: input.role };
+}
+
+const activeAdmins = (s: DemoState) => s.users.filter((u) => u.is_active && u.role === "admin");
+
+/**
+ * Adds a user to the demo organisation. In the demo nobody receives an email:
+ * the user exists locally and can be switched to from the user menu.
+ */
+export function addUser(state: DemoState, ctx: Ctx, input: UserInput) {
+  assertCan(state, ctx, "users.manage");
+  const fields = validateUser(state, input, null);
+  const s = draft(state);
+  const user: DemoUser = { id: uuidV4(), ...fields, is_active: true, created_at: iso(ctx.now) };
+  s.users.push(user);
+  audit(s, ctx, "user.created", "user", user.id, { email: user.email, role: user.role });
+  return s;
+}
+
+/** Edits a user's name, email and role. Admins cannot demote themselves or the last active admin. */
+export function updateUser(state: DemoState, ctx: Ctx, userId: string, input: UserInput) {
+  assertCan(state, ctx, "users.manage");
+  const before = state.users.find((u) => u.id === userId);
+  if (!before) throw new EngineError("not_found", "User not found.");
+  const fields = validateUser(state, input, userId);
+  if (before.role === "admin" && fields.role !== "admin") {
+    if (userId === ctx.actorId) throw new EngineError("invalid", "You cannot remove your own admin role.");
+    if (before.is_active && activeAdmins(state).length <= 1)
+      throw new EngineError("invalid", "The organisation must keep at least one active admin.");
+  }
+  const s = draft(state);
+  const after = replace(s.users, userId, fields);
+  const changes = diff(before, after, ["email", "full_name", "role"]);
+  if (Object.keys(changes).length === 0) return state;
+  audit(s, ctx, before.role !== after.role ? "user.role_changed" : "user.updated", "user", userId, changes);
+  return s;
+}
+
+/** Deactivates or reactivates a user. History stays attributed to them. */
+export function setUserActive(state: DemoState, ctx: Ctx, userId: string, active: boolean) {
+  assertCan(state, ctx, "users.manage");
+  const before = state.users.find((u) => u.id === userId);
+  if (!before) throw new EngineError("not_found", "User not found.");
+  if (before.is_active === active) return state;
+  if (!active) {
+    if (userId === ctx.actorId) throw new EngineError("invalid", "You cannot deactivate your own account.");
+    if (before.role === "admin" && activeAdmins(state).length <= 1)
+      throw new EngineError("invalid", "The organisation must keep at least one active admin.");
+  }
+  const s = draft(state);
+  replace(s.users, userId, { is_active: active });
+  audit(s, ctx, active ? "user.reactivated" : "user.deactivated", "user", userId, {
+    is_active: { from: !active, to: active },
+  });
+  return s;
 }

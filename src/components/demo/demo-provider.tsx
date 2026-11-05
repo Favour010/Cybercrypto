@@ -6,7 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { EngineError, currentUser, workerTick, type Ctx } from "@/lib/demo/engine";
 import { clearAll, loadState, probePersistence, saveState, type PersistenceKind } from "@/lib/demo/persistence";
 import { createRng, type Rng } from "@/lib/demo/rng";
-import { createSeedState } from "@/lib/demo/seed";
+import { createSeedState, DEFAULT_SEED, type SeedOptions } from "@/lib/demo/seed";
 import type { DemoState, DemoUser } from "@/lib/demo/types";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +31,8 @@ interface DemoContextValue {
     fn: (state: DemoState, ctx: Ctx) => { state: DemoState; value: T },
   ) => { ok: true; value: T } | { ok: false; error: string };
   notify: (message: string, tone?: Toast["tone"]) => void;
-  reset: () => Promise<void>;
+  /** Replace all demo data with a freshly generated sample. */
+  reset: (options?: { seed?: number } & SeedOptions) => Promise<void>;
 }
 
 const DemoContext = createContext<DemoContextValue | null>(null);
@@ -135,6 +136,23 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(t);
   }, [state, persistence]);
 
+  // Leaving or hiding the page: save pending changes now instead of after the debounce.
+  useEffect(() => {
+    if (persistence !== "indexeddb") return;
+    const flush = () => {
+      if (!dirty.current || !stateRef.current) return;
+      dirty.current = false;
+      void saveState(stateRef.current);
+    };
+    const onVisibility = () => document.visibilityState === "hidden" && flush();
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [persistence]);
+
   // Other tabs saved: reload (unless this tab has unsaved changes).
   useEffect(() => {
     if (typeof BroadcastChannel === "undefined") return;
@@ -210,15 +228,19 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
     [commitNow],
   );
 
-  const reset = useCallback(async () => {
-    await clearAll();
-    const fresh = createSeedState(new Date());
-    stateRef.current = fresh;
-    setState(fresh);
-    await saveState(fresh);
-    channel.current?.postMessage({ type: "reset" });
-    notify("Demo data was reset to a fresh sample.");
-  }, [notify]);
+  const reset = useCallback(
+    async (options: { seed?: number } & SeedOptions = {}) => {
+      await clearAll();
+      const { seed, ...rest } = options;
+      const fresh = createSeedState(new Date(), seed ?? DEFAULT_SEED, rest);
+      stateRef.current = fresh;
+      setState(fresh);
+      await saveState(fresh);
+      channel.current?.postMessage({ type: "reset" });
+      notify("Demo data was reset to a fresh sample.");
+    },
+    [notify],
+  );
 
   const value = useMemo<DemoContextValue | null>(
     () => (state && now ? { state, user: currentUser(state), persistence, now, run, runWith, notify, reset } : null),

@@ -12,6 +12,8 @@ import {
   Save,
   Search,
   Server,
+  Shuffle,
+  Users,
   Webhook,
 } from "lucide-react";
 import Link from "next/link";
@@ -23,6 +25,7 @@ import { StatusBadge } from "@/components/common/status-badge";
 import { useDemo } from "@/components/demo/demo-provider";
 import { ConfirmAction, DemoNotice, SimulatedBadge } from "@/components/demo/demo-ui";
 import { downloadCsv } from "@/components/demo/pages/demo-analytics";
+import { ResultSimulator } from "@/components/demo/result-simulator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +33,7 @@ import { Input, NativeSelect } from "@/components/ui/input";
 import { can } from "@/lib/auth/permissions";
 import { updateIntegrations, updateSettings } from "@/lib/demo/engine";
 import { auditRows } from "@/lib/demo/selectors";
+import { DEFAULT_SEED, DEFAULT_WEEKDAY_VOLUME, HISTORY_DAYS, SEED_LIMITS } from "@/lib/demo/seed";
 import type { ConnectionTestResult, SystemSettings } from "@/lib/demo/types";
 import { formatDateTime, formatNumber } from "@/lib/format";
 
@@ -417,10 +421,15 @@ export function DemoIntegrations({ server }: { server: ServerInfo }) {
         </Card>
       </div>
 
+      <ResultSimulator />
+
       <Card className="gap-3">
         <CardHeader>
           <CardTitle>Outbound event log</CardTitle>
-          <CardDescription>Events recorded for n8n. In demo mode they are recorded but not delivered.</CardDescription>
+          <CardDescription>
+            Events recorded for n8n, with the exact payload a real delivery would carry. In demo mode they are recorded
+            but not delivered.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {outbound.length === 0 ? (
@@ -430,10 +439,17 @@ export function DemoIntegrations({ server }: { server: ServerInfo }) {
           ) : (
             <ul className="divide-y text-sm">
               {outbound.map((e) => (
-                <li key={e.id} className="flex flex-wrap items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
-                  <code className="font-mono text-xs">{e.event_type}</code>
-                  <StatusBadge tone="neutral" label="Not sent (demo)" />
-                  <span className="text-muted-foreground text-xs tabular-nums">{formatDateTime(e.created_at)}</span>
+                <li key={e.id} className="py-2 first:pt-0 last:pb-0">
+                  <details>
+                    <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2">
+                      <code className="font-mono text-xs">{e.event_type}</code>
+                      <StatusBadge tone="neutral" label="Not sent (demo)" />
+                      <span className="text-muted-foreground text-xs tabular-nums">{formatDateTime(e.created_at)}</span>
+                    </summary>
+                    <pre className="bg-muted/50 mt-2 max-h-64 overflow-auto rounded-md border p-3 font-mono text-[11px] leading-relaxed">
+                      {JSON.stringify(e.payload, null, 2)}
+                    </pre>
+                  </details>
                 </li>
               ))}
             </ul>
@@ -947,8 +963,109 @@ export function DemoSystem({ server }: { server: ServerInfo }) {
               </div>
             </CardContent>
           </Card>
+          {isAdmin ? <SampleDataGenerator /> : null}
+          <Card className="gap-3">
+            <CardHeader>
+              <CardTitle>Users &amp; roles</CardTitle>
+              <CardDescription>
+                {state.users.filter((u) => u.is_active).length} active users. Add users, change roles and see what each
+                role may do.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button size="sm" variant="outline" asChild>
+                <Link href="/settings/system/users">
+                  <Users aria-hidden /> Manage users
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </>
+  );
+}
+
+/** Regenerates the sample dataset with a chosen size and seed (same seed → same data). */
+function SampleDataGenerator() {
+  const { reset, state } = useDemo();
+  const [days, setDays] = useState(HISTORY_DAYS);
+  const [volume, setVolume] = useState(DEFAULT_WEEKDAY_VOLUME);
+  const [seed, setSeed] = useState(state.seed ?? DEFAULT_SEED);
+  const inRange = (v: number, [lo, hi]: readonly [number, number]) => Number.isInteger(v) && v >= lo && v <= hi;
+  const valid =
+    inRange(days, SEED_LIMITS.historyDays) &&
+    inRange(volume, SEED_LIMITS.weekdayVolume) &&
+    Number.isInteger(seed) &&
+    seed >= 1 &&
+    seed < 2 ** 31;
+  const approx = Math.round(days * (volume * (5 / 7) + volume * 0.41 * (2 / 7)));
+  const field = (id: string, label: string, value: number, set: (n: number) => void, min: number, max: number) => (
+    <div>
+      <label htmlFor={id} className="text-muted-foreground mb-1 block text-xs font-medium">
+        {label}
+      </label>
+      <Input
+        id={id}
+        type="number"
+        min={min}
+        max={max}
+        value={Number.isNaN(value) ? "" : value}
+        onChange={(e) => set(Number.parseInt(e.target.value, 10))}
+      />
+    </div>
+  );
+  return (
+    <Card className="gap-3">
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Shuffle className="text-muted-foreground size-4" aria-hidden />
+          <CardTitle>Sample data generator</CardTitle>
+        </div>
+        <CardDescription>
+          Builds a realistic history: jobs from external systems and manual entry, routing decisions, simulated dry-run
+          attempts with failures, retries and human review. All of it is labelled simulated.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-2">
+          {field("gen-days", "Days of history", days, setDays, ...SEED_LIMITS.historyDays)}
+          {field("gen-volume", "Jobs per weekday", volume, setVolume, ...SEED_LIMITS.weekdayVolume)}
+          <div className="col-span-2">{field("gen-seed", "Seed", seed, setSeed, 1, 2 ** 31 - 1)}</div>
+        </div>
+        {valid ? (
+          <p className="text-muted-foreground text-xs">
+            About {formatNumber(approx)} jobs. The same seed always produces the same data.
+          </p>
+        ) : (
+          <p className="text-destructive text-xs">Days 1–60, jobs per weekday 1–300 and a whole-number seed.</p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="ghost" onClick={() => setSeed(1 + Math.floor(Math.random() * (2 ** 31 - 2)))}>
+            Random seed
+          </Button>
+          <ConfirmAction
+            disabled={!valid}
+            trigger={
+              <Button size="sm" variant="outline" disabled={!valid}>
+                <Shuffle aria-hidden /> Generate dataset
+              </Button>
+            }
+            title="Replace demo data with a new sample?"
+            description={
+              <p>
+                All current demo data in this browser is replaced with about {formatNumber(approx)} generated jobs over{" "}
+                {days} days. Uploaded files are deleted. Users, portals and settings return to their defaults.
+              </p>
+            }
+            confirmLabel="Generate dataset"
+            destructive
+            onConfirm={() => {
+              void reset({ seed, historyDays: days, weekdayVolume: volume }).then(() => window.location.reload());
+            }}
+          />
+        </div>
+      </CardContent>
+    </Card>
   );
 }
